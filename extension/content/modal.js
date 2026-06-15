@@ -315,19 +315,19 @@
     const notes = $('#lqc-notes').value.trim();
     const targetPage = await getTargetPage();
 
+    // Embed tags inline so Logseq DB stores them as native :block/tags relationships.
+    // upsertBlockProperty("tags") stores under a plugin namespace instead.
+    const tags = [...selectedTags];
+    if (capturedHighlight) tags.push('highlight');
+    const tagStr = tags.length ? ' ' + tags.map((t) => `#${t}`).join(' ') : '';
+
     const block = await apiCall('logseq.Editor.appendBlockInPage', [
       targetPage,
-      `[${capturedTitle}](${capturedUrl})`,
+      `[${capturedTitle}](${capturedUrl})${tagStr}`,
     ]);
 
     if (!block?.uuid) {
       throw new Error('Block created but no UUID returned — check Logseq HTTP API compatibility.');
-    }
-
-    const tags = [...selectedTags];
-    if (capturedHighlight) tags.push('highlight');
-    if (tags.length) {
-      await apiCall('logseq.Editor.upsertBlockProperty', [block.uuid, 'tags', tags]);
     }
 
     if (notes) {
@@ -351,14 +351,12 @@
 
     const block = await apiCall('logseq.Editor.appendBlockInPage', [
       targetPage,
-      `[${capturedTitle}](${capturedUrl})`,
+      `[${capturedTitle}](${capturedUrl}) #${tagName}`,
     ]);
 
     if (!block?.uuid) {
       throw new Error('Block created but no UUID returned — check Logseq HTTP API compatibility.');
     }
-
-    await apiCall('logseq.Editor.upsertBlockProperty', [block.uuid, 'tags', [tagName]]);
 
     for (const el of $$('.lqc-prop-input')) {
       const val = el.type === 'checkbox' ? el.checked : el.value;
