@@ -1,8 +1,10 @@
 (function () {
   'use strict';
 
-  if (window.__lqcLoaded) return;
-  window.__lqcLoaded = true;
+  // Remove any host left by a previous extension context (e.g. after hot-reload)
+  // so the new context takes over cleanly. Duplicate injection from the manifest
+  // is not possible in MV3, so there's no need for a window-level guard.
+  document.getElementById('lqc-host')?.remove();
 
   // ─── State ──────────────────────────────────────────────────────────────────
 
