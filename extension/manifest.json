@@ -5,7 +5,7 @@
   "description": "Quick capture from Firefox to Logseq DB",
   "browser_specific_settings": {
     "gecko": {
-      "id": "logseq-quick-capture@lqc.local",
+      "id": "loqseqexpandedclipper@brerlapn.org",
       "strict_min_version": "112.0"
     }
   },
