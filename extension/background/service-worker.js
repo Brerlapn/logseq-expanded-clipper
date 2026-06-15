@@ -1,19 +1,31 @@
 // Route keyboard command and toolbar click to the active tab's content script
 browser.commands.onCommand.addListener(async (command) => {
-  if (command === 'open-modal') await sendOpen();
+  if (command !== 'open-modal') return;
+  // Try currentWindow first; fall back to lastFocusedWindow for Zen Browser
+  // which has a non-standard window model
+  let [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+  if (!tab) [tab] = await browser.tabs.query({ active: true, lastFocusedWindow: true });
+  if (tab) await openInTab(tab.id);
 });
 
-browser.action.onClicked.addListener(async () => {
-  await sendOpen();
+// onClicked receives the tab directly — no query needed
+browser.action.onClicked.addListener(async (tab) => {
+  if (tab?.id) await openInTab(tab.id);
 });
 
-async function sendOpen() {
-  const [tab] = await browser.tabs.query({ active: true, lastFocusedWindow: true });
-  if (!tab?.id) return;
+async function openInTab(tabId) {
   try {
-    await browser.tabs.sendMessage(tab.id, { type: 'LQC_OPEN' });
+    await browser.tabs.sendMessage(tabId, { type: 'LQC_OPEN' });
   } catch {
-    // Content script unavailable on browser-internal pages — nothing to do
+    // sendMessage fails on browser-internal pages or if content script hasn't
+    // initialised yet — fall back to scripting.executeScript which uses the
+    // window.__lqcOpen handle set by the content script
+    try {
+      await browser.scripting.executeScript({
+        target: { tabId },
+        func: () => { window.__lqcOpen?.(); },
+      });
+    } catch { /* browser-internal page, nothing to do */ }
   }
 }
 
