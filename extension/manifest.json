@@ -30,6 +30,10 @@
       "description": "Open Logseq Quick Capture"
     }
   },
+  "data_collection_permissions": {
+    "required": [],
+    "optional": []
+  },
   "permissions": ["activeTab", "storage", "scripting"],
   "host_permissions": ["http://localhost/*"],
   "action": {
