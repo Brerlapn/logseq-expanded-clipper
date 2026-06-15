@@ -1,0 +1,53 @@
+{
+  "manifest_version": 3,
+  "name": "Logseq Quick Capture",
+  "version": "1.0.0",
+  "description": "Quick capture from Firefox to Logseq DB",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "logseq-quick-capture@lqc.local",
+      "strict_min_version": "112.0"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "background": {
+    "scripts": ["background/service-worker.js"],
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content/modal.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "options_ui": {
+    "page": "options/options.html",
+    "open_in_tab": true
+  },
+  "commands": {
+    "open-modal": {
+      "suggested_key": {
+        "default": "Alt+Shift+L"
+      },
+      "description": "Open Logseq Quick Capture"
+    }
+  },
+  "permissions": ["activeTab", "storage", "scripting"],
+  "host_permissions": ["http://localhost/*"],
+  "action": {
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    },
+    "default_title": "Logseq Quick Capture (Alt+Shift+L)"
+  }
+}
