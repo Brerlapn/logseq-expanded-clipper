@@ -61,15 +61,16 @@
     ]) ?? 'th';
     const pad = (n) => String(n).padStart(2, '0');
 
+    const year = String(date.getFullYear());
     return fmt
-      .replace(/MMMM/g, months[date.getMonth()])
-      .replace(/MMM/g,  short[date.getMonth()])
-      .replace(/MM/g,   pad(date.getMonth() + 1))
-      .replace(/do/g,   d + suffix)
-      .replace(/DD/g,   pad(d))
-      .replace(/D/g,    String(d))
-      .replace(/YYYY/g, String(date.getFullYear()))
-      .replace(/YY/g,   String(date.getFullYear()).slice(-2));
+      .replace(/MMMM/g,     months[date.getMonth()])
+      .replace(/MMM/g,      short[date.getMonth()])
+      .replace(/MM/g,       pad(date.getMonth() + 1))
+      .replace(/do/g,       d + suffix)
+      .replace(/DD|dd/g,    pad(d))
+      .replace(/D(?!o)\b/g, String(d))
+      .replace(/YYYY|yyyy/g, year)
+      .replace(/YY|yy/g,    year.slice(-2));
   }
 
   // ─── Persistence ────────────────────────────────────────────────────────────
