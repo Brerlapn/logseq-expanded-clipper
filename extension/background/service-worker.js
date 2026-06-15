@@ -1,39 +1,26 @@
 // Route keyboard command and toolbar click to the active tab's content script
 browser.commands.onCommand.addListener(async (command) => {
-  console.log('[LQC-cmd] command fired:', command);
   if (command !== 'open-modal') return;
   let [tab] = await browser.tabs.query({ active: true, currentWindow: true });
   if (!tab) [tab] = await browser.tabs.query({ active: true, lastFocusedWindow: true });
-  console.log('[LQC-cmd] tab found:', tab?.id, tab?.url?.slice(0, 60));
   if (tab) await openInTab(tab.id);
 });
 
 // onClicked receives the tab directly — no query needed
 browser.action.onClicked.addListener(async (tab) => {
-  console.log('[LQC-a] action.onClicked fired, tabId:', tab?.id, tab?.url?.slice(0, 60));
   if (tab?.id) await openInTab(tab.id);
 });
 
 async function openInTab(tabId) {
-  console.log('[LQC-b] openInTab tabId:', tabId);
-
   try {
     await browser.tabs.sendMessage(tabId, { type: 'LQC_OPEN' });
-    console.log('[LQC-b] sendMessage succeeded');
     return;
-  } catch (e) {
-    console.log('[LQC-b] sendMessage failed:', e.message);
-  }
+  } catch { /* not yet injected, fall through */ }
 
-  console.log('[LQC-c] attempting scripting.executeScript files');
   try {
     await browser.scripting.executeScript({ target: { tabId }, files: ['content/modal.js'] });
-    console.log('[LQC-d] file injection succeeded, calling __lqcOpen');
     await browser.scripting.executeScript({ target: { tabId }, func: () => { window.__lqcOpen?.(); } });
-    console.log('[LQC-e] __lqcOpen call done');
-  } catch (e) {
-    console.log('[LQC-c] executeScript failed:', e.message);
-  }
+  } catch { /* browser-internal page — nothing to do */ }
 }
 
 browser.runtime.onMessage.addListener((message) => {
