@@ -292,6 +292,10 @@
     const btn = $('#lqc-save');
     const errEl = $('#lqc-error');
 
+    // Commit any tag text still in the input (user typed a tag but didn't press Enter)
+    const pendingTag = $('#lqc-tag-input')?.value.trim();
+    if (pendingTag) addTag(pendingTag);
+
     btn.disabled = true;
     btn.textContent = 'Saving…';
     errEl.hidden = true;
