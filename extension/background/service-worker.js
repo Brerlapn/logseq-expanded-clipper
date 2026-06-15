@@ -17,6 +17,12 @@ async function sendOpen() {
   }
 }
 
+browser.runtime.onMessage.addListener((message) => {
+  if (message.type === 'LQC_OPEN_OPTIONS') {
+    browser.tabs.create({ url: browser.runtime.getURL('options/options.html') });
+  }
+});
+
 // Proxy Logseq HTTP API calls from content script (content scripts can't
 // make cross-origin requests to localhost reliably without host_permissions
 // in the background context)

@@ -534,8 +534,22 @@
     .lqc-tab:hover { color: #111827; }
     .lqc-tab.lqc-tab-active { color: #4f46e5; border-bottom-color: #4f46e5; }
 
-    #lqc-close {
+    #lqc-settings {
       margin-left: auto;
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-size: 16px;
+      color: #9ca3af;
+      line-height: 1;
+      padding: 4px 6px;
+      border-radius: 4px;
+      align-self: center;
+      font-family: inherit;
+    }
+    #lqc-settings:hover { color: #111827; background: #f3f4f6; }
+
+    #lqc-close {
       background: none;
       border: none;
       cursor: pointer;
@@ -804,6 +818,7 @@
         <div id="lqc-header">
           <button class="lqc-tab lqc-tab-active" data-mode="clipper">Web Clipper</button>
           <button class="lqc-tab" data-mode="tags">Tag Properties</button>
+          <button id="lqc-settings" aria-label="Settings" title="Settings">&#9881;</button>
           <button id="lqc-close" aria-label="Close">&times;</button>
         </div>
 
@@ -896,6 +911,12 @@
   function bindEvents() {
     // Close
     $('#lqc-close').addEventListener('click', closeModal);
+
+    // Settings — open options page in a new tab via background
+    $('#lqc-settings').addEventListener('click', () => {
+      browser.runtime.sendMessage({ type: 'LQC_OPEN_OPTIONS' });
+      closeModal();
+    });
 
     // ESC to close (capture phase so page handlers don't fire)
     root.addEventListener('keydown', (e) => {

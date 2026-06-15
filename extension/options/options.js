@@ -1,5 +1,10 @@
 'use strict';
 
+window.onerror = (msg, src, line, col, err) => {
+  const banner = document.getElementById('lqc-err-banner');
+  if (banner) { banner.textContent = `JS Error: ${msg}\n${src}:${line}:${col}`; banner.style.display = 'block'; }
+};
+
 const FIELD_TYPES = ['text', 'number', 'date', 'checkbox', 'url', 'node'];
 
 // ── State ─────────────────────────────────────────────────────────────────────
