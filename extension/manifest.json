@@ -19,14 +19,6 @@
     "scripts": ["background/service-worker.js"],
     "type": "module"
   },
-  "content_scripts": [
-    {
-      "matches": ["<all_urls>"],
-      "js": ["content/modal.js"],
-      "run_at": "document_idle",
-      "all_frames": false
-    }
-  ],
   "options_ui": {
     "page": "options/options.html",
     "open_in_tab": false

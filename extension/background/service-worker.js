@@ -14,19 +14,18 @@ browser.action.onClicked.addListener(async (tab) => {
 });
 
 async function openInTab(tabId) {
+  // Try sendMessage first — works if the script was already injected this session
   try {
     await browser.tabs.sendMessage(tabId, { type: 'LQC_OPEN' });
-  } catch {
-    // sendMessage fails on browser-internal pages or if content script hasn't
-    // initialised yet — fall back to scripting.executeScript which uses the
-    // window.__lqcOpen handle set by the content script
-    try {
-      await browser.scripting.executeScript({
-        target: { tabId },
-        func: () => { window.__lqcOpen?.(); },
-      });
-    } catch { /* browser-internal page, nothing to do */ }
-  }
+    return;
+  } catch { /* not yet injected, fall through */ }
+
+  // Inject on-demand then open. scripting.executeScript resolves after the
+  // IIFE has fully run, so __lqcOpen is set by the time the second call fires.
+  try {
+    await browser.scripting.executeScript({ target: { tabId }, files: ['content/modal.js'] });
+    await browser.scripting.executeScript({ target: { tabId }, func: () => { window.__lqcOpen?.(); } });
+  } catch { /* browser-internal page — nothing to do */ }
 }
 
 browser.runtime.onMessage.addListener((message) => {
