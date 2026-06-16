@@ -6,7 +6,11 @@
   "browser_specific_settings": {
     "gecko": {
       "id": "logseqexpandedclipper@brerlapn.org",
-      "strict_min_version": "112.0"
+      "strict_min_version": "112.0",
+      "data_collection_permissions": {
+        "required": [],
+        "optional": []
+      }
     }
   },
   "icons": {
@@ -29,10 +33,6 @@
       },
       "description": "Open Logseq Quick Capture"
     }
-  },
-  "data_collection_permissions": {
-    "required": [],
-    "optional": []
   },
   "permissions": ["activeTab", "storage", "scripting"],
   "host_permissions": ["http://localhost/*"],
