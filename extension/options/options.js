@@ -28,6 +28,9 @@ async function load() {
   tagConfigs = data.tagConfigs;
   graphSettings = data.graphSettings;
 
+  const { cliEnabled } = await browser.storage.sync.get({ cliEnabled: false });
+  document.getElementById('cli-enabled').checked = cliEnabled;
+
   // Migration: configs predating graph binding bind to the only known graph
   const known = Object.keys(graphSettings);
   if (known.length === 1) {
@@ -57,6 +60,47 @@ async function saveSettings() {
     showStatus(status, 'Saved!', 'ok');
   } catch (err) {
     showStatus(status, `Error: ${err.message}`, 'err');
+  }
+}
+
+// ── CLI integration ───────────────────────────────────────────────────────────
+
+async function toggleCli(enabled) {
+  const result = document.getElementById('cli-result');
+  if (enabled) {
+    // Optional permission request must happen in the user-gesture handler
+    const granted = await browser.permissions.request({ permissions: ['nativeMessaging'] });
+    if (!granted) {
+      document.getElementById('cli-enabled').checked = false;
+      return;
+    }
+  }
+  await browser.storage.sync.set({ cliEnabled: enabled });
+  if (enabled) {
+    await testCli();
+  } else {
+    result.hidden = true;
+  }
+}
+
+async function testCli() {
+  const result = document.getElementById('cli-result');
+  result.textContent = 'Testing…';
+  result.className = 'test-result';
+  result.hidden = false;
+
+  try {
+    const status = await browser.runtime.sendMessage({ type: 'LQC_CLI_DETECT' });
+    if (status?.available) {
+      result.textContent = `CLI connected (${(status.version ?? '').split('\n')[0]})`;
+      result.className = 'test-result ok';
+    } else {
+      result.textContent = status?.error ?? 'CLI not reachable.';
+      result.className = 'test-result err';
+    }
+  } catch (err) {
+    result.textContent = `Error: ${err.message}`;
+    result.className = 'test-result err';
   }
 }
 
@@ -175,7 +219,9 @@ function renderTagConfigs() {
 
     const name = document.createElement('span');
     name.className = 'tag-config-name';
-    name.textContent = cfg.tagName + (cfg.graph ? ` — ${cfg.graph}` : ' — (no graph set)');
+    name.textContent = cfg.tagName
+      + (cfg.graph ? ` — ${cfg.graph}` : ' — (no graph set)')
+      + (cfg.liveRead ? ' • live' : '');
 
     const editBtn = document.createElement('button');
     editBtn.className = 'btn btn-secondary';
@@ -239,6 +285,7 @@ function openEditor(index) {
     opt.textContent = g;
     graphSelect.appendChild(opt);
   });
+  graphSelect.onchange = () => loadTagNameSuggestions(graphSelect.value);
 
   if (index === -1) {
     title.textContent = 'New tag config';
@@ -253,9 +300,40 @@ function openEditor(index) {
     (cfg.fields ?? []).forEach((f) => addFieldRow(f.name, f.type));
   }
 
+  // Live-read configs mirror the graph's schema — field edits would be
+  // overwritten on the next refresh, so lock them
+  const isLive = index !== -1 && Boolean(tagConfigs[index]?.liveRead);
+  document.getElementById('te-live-note').hidden = !isLive;
+  document.getElementById('te-add-field').style.display = isLive ? 'none' : '';
+  fieldsList.querySelectorAll('input, select, button').forEach((el) => { el.disabled = isLive; });
+
+  loadTagNameSuggestions(graphSelect.value);
+
   editor.hidden = false;
   nameInput.focus();
   editor.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+// With the CLI transport, the selected graph's existing tags feed a datalist
+// under the tag-name input, so configs reference real tags instead of typos.
+// Baseline (no CLI): silently no suggestions.
+async function loadTagNameSuggestions(graph) {
+  const datalist = document.getElementById('te-tag-names');
+  const hint = document.getElementById('te-tag-names-hint');
+  datalist.innerHTML = '';
+  hint.hidden = true;
+  if (!graph) return;
+
+  try {
+    const resp = await browser.runtime.sendMessage({ type: 'LQC_OP', op: 'getTags', graph });
+    if (!resp?.ok || !Array.isArray(resp.result)) return;
+    resp.result.forEach((tag) => {
+      const opt = document.createElement('option');
+      opt.value = tag;
+      datalist.appendChild(opt);
+    });
+    hint.hidden = resp.result.length === 0;
+  } catch { /* baseline transport — no suggestions */ }
 }
 
 function closeEditor() {
@@ -338,7 +416,10 @@ function saveEditor() {
     }
     tagConfigs.push({ tagName, graph, fields });
   } else {
-    tagConfigs[editingIndex] = { tagName, graph, fields };
+    const prev = tagConfigs[editingIndex];
+    tagConfigs[editingIndex] = prev?.liveRead
+      ? { ...prev, tagName, graph } // fields stay mirrored from the graph
+      : { tagName, graph, fields };
   }
 
   renderTagConfigs();
@@ -361,6 +442,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.getElementById('save-settings').addEventListener('click', saveSettings);
   document.getElementById('test-connection').addEventListener('click', testConnection);
+  document.getElementById('cli-enabled').addEventListener('change', (e) => toggleCli(e.target.checked));
+  document.getElementById('cli-test').addEventListener('click', testCli);
   document.getElementById('add-tag-config').addEventListener('click', () => openEditor(-1));
   document.getElementById('te-add-field').addEventListener('click', () => addFieldRow());
   document.getElementById('te-save').addEventListener('click', saveEditor);

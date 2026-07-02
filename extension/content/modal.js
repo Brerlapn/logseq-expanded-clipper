@@ -52,32 +52,6 @@
     return Promise.race([call, timeout]);
   }
 
-  // ─── Date formatting ────────────────────────────────────────────────────────
-
-  function formatDate(date, fmt) {
-    const months = [
-      'January','February','March','April','May','June',
-      'July','August','September','October','November','December',
-    ];
-    const short = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    const d = date.getDate();
-    const suffix = (['th','st','nd','rd'][
-      (d % 10 > 3 || Math.floor((d % 100) / 10) === 1) ? 0 : d % 10
-    ]) ?? 'th';
-    const pad = (n) => String(n).padStart(2, '0');
-
-    const year = String(date.getFullYear());
-    return fmt
-      .replace(/MMMM/g,     months[date.getMonth()])
-      .replace(/MMM/g,      short[date.getMonth()])
-      .replace(/MM/g,       pad(date.getMonth() + 1))
-      .replace(/do/g,       d + suffix)
-      .replace(/DD|dd/g,    pad(d))
-      .replace(/D(?!o)\b/g, String(d))
-      .replace(/YYYY|yyyy/g, year)
-      .replace(/YY|yy/g,    year.slice(-2));
-  }
-
   // ─── Persistence ────────────────────────────────────────────────────────────
 
   function savePending(state) {
@@ -236,7 +210,22 @@
       label.htmlFor = `lqc-prop-${escHtml(field.name)}`;
 
       let input;
-      if (field.type === 'checkbox') {
+      if (field.choices?.length) {
+        // Choices property: only the predefined values are valid — free text
+        // would fail Logseq's closed-value validation at save time
+        input = document.createElement('select');
+        input.className = 'lqc-input';
+        const none = document.createElement('option');
+        none.value = '';
+        none.textContent = '(none)';
+        input.appendChild(none);
+        field.choices.forEach((choice) => {
+          const opt = document.createElement('option');
+          opt.value = choice;
+          opt.textContent = choice;
+          input.appendChild(opt);
+        });
+      } else if (field.type === 'checkbox') {
         input = document.createElement('input');
         input.type = 'checkbox';
         input.className = 'lqc-checkbox';
@@ -265,6 +254,30 @@
       row.appendChild(input);
       container.appendChild(row);
     });
+  }
+
+  // ─── Live tag schema (CLI transport) ─────────────────────────────────────────
+
+  // The graph's own schema is the source of truth: refresh the config from
+  // the tag's Target Graph, cache it, and re-render only if it changed
+  // (re-rendering wipes anything already typed into the fields).
+  async function loadTagSchema(tagName) {
+    if (!tagName || !transportInfo.capabilities?.readSchemas) return;
+    const idx = tagConfigs.findIndex((c) => c.tagName === tagName);
+    const cfg = tagConfigs[idx];
+    if (!cfg?.graph) return;
+
+    try {
+      const resp = await browser.runtime.sendMessage({
+        type: 'LQC_OP', op: 'getTagSchema', graph: cfg.graph, tag: tagName,
+      });
+      if (!resp?.ok || !Array.isArray(resp.result) || !resp.result.length) return;
+
+      const changed = JSON.stringify(resp.result) !== JSON.stringify(cfg.fields);
+      tagConfigs[idx] = { ...cfg, fields: resp.result, liveRead: true };
+      browser.storage.sync.set({ tagConfigs }).catch(() => {});
+      if (changed && $('#lqc-tag-select').value === tagName) renderTagFields(tagName);
+    } catch { /* cached fields remain */ }
   }
 
   // ─── Restore a pending draft ─────────────────────────────────────────────────
@@ -301,55 +314,41 @@
     }
   }
 
-  // ─── Graph Guard ─────────────────────────────────────────────────────────────
-
-  // Baseline transports can only write to the open graph, so a capture aimed
-  // elsewhere must be blocked (the Retry/draft flow takes over). Routing
-  // transports satisfy the Target Graph directly and skip the guard.
-  async function enforceGraphGuard() {
-    const target = currentTargetGraph();
-    if (!target || transportInfo.capabilities?.routeWrites) return;
-
-    const cur = await apiCall('logseq.App.getCurrentGraph', []);
-    currentGraphName = cur?.name ?? cur?.['graph/name'] ?? '';
-
-    if (currentGraphName && currentGraphName !== target) {
-      throw new Error(
-        `Logseq has "${currentGraphName}" open, but this capture is aimed at "${target}". ` +
-        `Switch graphs in Logseq, then Retry.`
-      );
-    }
-
-    // Guard passed: the target graph is the open one — refresh its tag cache
-    refreshTagCache();
-  }
-
-  // ─── Target page resolution ──────────────────────────────────────────────────
-
-  async function getTargetPage() {
-    // Per-graph capture page; a capture following the open graph ('') uses
-    // the open graph's setting
-    let graphName = currentTargetGraph();
-    if (!graphName) {
-      try {
-        const cur = await apiCall('logseq.App.getCurrentGraph', []);
-        graphName = cur?.name ?? cur?.['graph/name'] ?? '';
-      } catch { /* journal fallback below */ }
-    }
-    const capturePage = graphSettings[graphName]?.capturePage ?? '';
-    if (capturePage) return capturePage;
-
-    try {
-      const configs = await apiCall('logseq.App.getUserConfigs', []);
-      const fmt = configs?.preferredDateFormat;
-      if (fmt) return formatDate(new Date(), fmt);
-    } catch { /* fall through */ }
-
-    // ISO date as universal fallback
-    return new Date().toISOString().slice(0, 10);
-  }
-
   // ─── Save ────────────────────────────────────────────────────────────────────
+  // Save composition (guard, routing, target page, tag/property resolution)
+  // lives in the background behind the transport seam — the modal only
+  // collects the payload and renders the outcome.
+
+  function buildSavePayload() {
+    if (currentMode === 'clipper') {
+      return {
+        mode: 'clipper',
+        graph: targetGraph,
+        title: capturedTitle,
+        url: capturedUrl,
+        tags: [...selectedTags],
+        notes: $('#lqc-notes').value.trim(),
+        highlight: capturedHighlight,
+      };
+    }
+
+    const tagName = $('#lqc-tag-select').value;
+    if (!tagName) throw new Error('Please select a tag.');
+    const cfg = tagConfigs.find((c) => c.tagName === tagName);
+    const fields = Array.from($$('.lqc-prop-input')).map((el) => ({
+      name: el.dataset.field,
+      type: el.dataset.type,
+      value: el.type === 'checkbox' ? el.checked : el.value,
+    }));
+    return {
+      mode: 'tags',
+      graph: cfg?.graph ?? '',
+      title: capturedTitle,
+      url: capturedUrl,
+      tagName,
+      fields,
+    };
+  }
 
   async function handleSave() {
     const btn = $('#lqc-save');
@@ -364,13 +363,9 @@
     errEl.hidden = true;
 
     try {
-      await enforceGraphGuard();
-
-      if (currentMode === 'clipper') {
-        await saveWebClip();
-      } else {
-        await saveTagProperties();
-      }
+      const payload = buildSavePayload();
+      const resp = await browser.runtime.sendMessage({ type: 'LQC_SAVE', payload });
+      if (!resp?.ok) throw new Error(resp?.error ?? 'Save failed — no response from background.');
       clearPending();
       closeModal();
     } catch (err) {
@@ -378,85 +373,9 @@
       errEl.hidden = false;
       btn.disabled = false;
       btn.textContent = 'Retry';
-    }
-  }
-
-  async function saveWebClip() {
-    const notes = $('#lqc-notes').value.trim();
-    const targetPage = await getTargetPage();
-
-    // Embed tags inline so Logseq DB stores them as native :block/tags relationships.
-    // upsertBlockProperty("tags") stores under a plugin namespace instead.
-    const tags = [...selectedTags];
-    if (capturedHighlight) tags.push('highlight');
-    const tagStr = tags.length ? ' ' + tags.map((t) => `#${t}`).join(' ') : '';
-
-    const block = await apiCall('logseq.Editor.appendBlockInPage', [
-      targetPage,
-      `[${capturedTitle}](${capturedUrl})${tagStr}`,
-    ]);
-
-    if (!block?.uuid) {
-      throw new Error('Block created but no UUID returned — check Logseq HTTP API compatibility.');
-    }
-
-    if (notes) {
-      await apiCall('logseq.Editor.insertBlock', [block.uuid, notes, { sibling: false }]);
-    }
-
-    if (capturedHighlight) {
-      await apiCall('logseq.Editor.insertBlock', [
-        block.uuid,
-        `> ${capturedHighlight}`,
-        { sibling: false },
-      ]);
-    }
-  }
-
-  async function saveTagProperties() {
-    const tagName = $('#lqc-tag-select').value;
-    if (!tagName) throw new Error('Please select a tag.');
-
-    const targetPage = await getTargetPage();
-
-    const block = await apiCall('logseq.Editor.appendBlockInPage', [
-      targetPage,
-      `[${capturedTitle}](${capturedUrl}) #${tagName}`,
-    ]);
-
-    if (!block?.uuid) {
-      throw new Error('Block created but no UUID returned — check Logseq HTTP API compatibility.');
-    }
-
-    // Property identity in Logseq DB is the ident (e.g. :user.property/artist-oIjtKMtL),
-    // not the display name — writing by name mints a duplicate property entity.
-    // Resolve names to the graph's existing property idents first.
-    const propIdents = {};
-    try {
-      const rows = await apiCall('logseq.DB.datascriptQuery', [
-        '[:find ?title ?ident :where [?p :block/tags :logseq.class/Property] [?p :db/ident ?ident] [?p :block/title ?title]]',
-      ]);
-      if (Array.isArray(rows)) {
-        rows.forEach(([title, ident]) => {
-          if (!title || !ident) return;
-          const key = String(title).toLowerCase();
-          // Titles can collide (e.g. a real property and a plugin-namespaced
-          // duplicate from earlier testing) — the user's own property wins
-          const isUserProp = (id) => String(id).replace(/^:/, '').startsWith('user.property/');
-          if (!propIdents[key] || (isUserProp(ident) && !isUserProp(propIdents[key]))) {
-            propIdents[key] = ident;
-          }
-        });
-      }
-    } catch { /* fall back to names — properties may be created new */ }
-
-    for (const el of $$('.lqc-prop-input')) {
-      const val = el.type === 'checkbox' ? el.checked : el.value;
-      const typed = el.dataset.type === 'number' ? (parseFloat(val) || val) : val;
-      if (val !== '' && val !== false) {
-        const key = propIdents[el.dataset.field.toLowerCase()] ?? el.dataset.field;
-        await apiCall('logseq.Editor.upsertBlockProperty', [block.uuid, key, typed]);
-      }
+      // The likeliest guard failure ends with the user switching graphs —
+      // refresh so Retry-time autocomplete reflects the target graph
+      refreshTagCache();
     }
   }
 
@@ -482,6 +401,16 @@
     try {
       transportInfo = await browser.runtime.sendMessage({ type: 'LQC_TRANSPORT_INFO' }) ?? transportInfo;
     } catch { /* keep defaults */ }
+
+    // CLI transport: the graph list is live, not accumulated
+    if (transportInfo.capabilities?.listGraphs) {
+      try {
+        const resp = await browser.runtime.sendMessage({ type: 'LQC_OP', op: 'listGraphs' });
+        if (resp?.ok && Array.isArray(resp.result) && resp.result.length) {
+          knownGraphs = resp.result;
+        }
+      } catch { /* stored Known Graphs remain */ }
+    }
 
     if (!host) injectModal();
 
@@ -597,9 +526,25 @@
     allTags = tagCache[target] ?? [];
   }
 
-  // Fetch the OPEN graph's tags and cache them under its name; adopt them for
-  // autocomplete only when the open graph is (or acts as) the Target Graph
+  // Refresh tags for autocomplete. CLI transport: read the Target Graph's
+  // tags directly, whatever the app has open. HTTP: fetch the OPEN graph's
+  // tags and cache them under its name; adopt them only when the open graph
+  // is (or acts as) the Target Graph.
   async function refreshTagCache() {
+    const target = currentTargetGraph();
+    if (target && transportInfo.capabilities?.readSchemas) {
+      try {
+        const resp = await browser.runtime.sendMessage({ type: 'LQC_OP', op: 'getTags', graph: target });
+        if (resp?.ok && Array.isArray(resp.result)) {
+          allTags = resp.result;
+          const { tagCache } = await browser.storage.local.get({ tagCache: {} });
+          tagCache[target] = allTags;
+          await browser.storage.local.set({ tagCache });
+          return;
+        }
+      } catch { /* fall through to the HTTP flow */ }
+    }
+
     try {
       const cur = await apiCall('logseq.App.getCurrentGraph', []);
       currentGraphName = cur?.name ?? cur?.['graph/name'] ?? '';
@@ -1154,6 +1099,7 @@
     // Tag Properties: tag select
     $('#lqc-tag-select').addEventListener('change', (e) => {
       renderTagFields(e.target.value);
+      loadTagSchema(e.target.value);
       saveDraft();
     });
 

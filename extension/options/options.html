@@ -37,6 +37,25 @@
       <span id="test-result" class="test-result" hidden></span>
     </section>
 
+    <!-- CLI integration -->
+    <section>
+      <h2>CLI integration</h2>
+      <p class="hint">
+        Optional power tier: with the Logseq CLI and the native messaging host installed
+        (see <code>native-host/install.sh</code> in the repo), captures route directly to any
+        graph — no graph switching — and tag fields are read live from the graph.
+      </p>
+
+      <div class="field">
+        <label>
+          <input type="checkbox" id="cli-enabled"> Enable CLI integration
+        </label>
+      </div>
+
+      <button id="cli-test" class="btn btn-secondary">Test CLI connection</button>
+      <span id="cli-result" class="test-result" hidden></span>
+    </section>
+
     <!-- Capture -->
     <section>
       <h2>Capture</h2>
@@ -67,11 +86,6 @@
       <h3 id="tag-editor-title">New tag config</h3>
 
       <div class="field">
-        <label for="te-tag-name">Tag name</label>
-        <input type="text" id="te-tag-name" placeholder="e.g. music-recs (without #)">
-      </div>
-
-      <div class="field">
         <label for="te-tag-graph">Graph</label>
         <select id="te-tag-graph"></select>
         <span class="field-hint">
@@ -80,7 +94,21 @@
       </div>
 
       <div class="field">
+        <label for="te-tag-name">Tag name</label>
+        <input type="text" id="te-tag-name" list="te-tag-names"
+               placeholder="e.g. music-recs (without #)">
+        <datalist id="te-tag-names"></datalist>
+        <span class="field-hint" id="te-tag-names-hint" hidden>
+          Suggestions are the selected graph's existing tags.
+        </span>
+      </div>
+
+      <div class="field">
         <label>Fields</label>
+        <p id="te-live-note" class="hint" hidden>
+          Fields for this tag are read live from its graph — Logseq is the source of truth.
+          Edit the tag's properties in Logseq instead.
+        </p>
         <div id="te-fields-list" class="fields-list"></div>
         <button type="button" id="te-add-field" class="btn btn-ghost">+ Add field</button>
       </div>
