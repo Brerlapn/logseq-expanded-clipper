@@ -149,16 +149,24 @@
 
   // ─── Autocomplete ───────────────────────────────────────────────────────────
 
-  function showAutocomplete(matches) {
+  function showAutocomplete(matches, query = '') {
     const list = $('#lqc-autocomplete');
     list.innerHTML = '';
-    if (!matches.length) { list.hidden = true; return; }
 
-    matches.slice(0, 8).forEach((tag) => {
+    const entries = matches.slice(0, 8).map((tag) => ({ tag, create: false }));
+
+    // New tags are created only via an explicit "Create" row, never implicitly
+    const q = query.trim().replace(/^#/, '');
+    const exists = allTags.some((t) => t.toLowerCase() === q.toLowerCase());
+    if (q && !exists && !selectedTags.includes(q)) entries.push({ tag: q, create: true });
+
+    if (!entries.length) { list.hidden = true; autocompleteIndex = -1; return; }
+
+    entries.forEach(({ tag, create }) => {
       const item = document.createElement('div');
-      item.className = 'lqc-ac-item';
+      item.className = create ? 'lqc-ac-item lqc-ac-create' : 'lqc-ac-item';
       item.dataset.tag = tag;
-      item.textContent = tag;
+      item.textContent = create ? `Create "#${tag}"` : tag;
       item.addEventListener('mousedown', (e) => {
         e.preventDefault(); // prevent input blur
         addTag(tag);
@@ -168,6 +176,18 @@
 
     list.hidden = false;
     autocompleteIndex = -1;
+  }
+
+  // Resolve typed text the same way the visible list would: exact tag wins,
+  // then the first suggestion, then the literal text (create)
+  function resolvePendingTag(val) {
+    const v = val.trim().replace(/^#/, '');
+    const exact = allTags.find((t) => t.toLowerCase() === v.toLowerCase());
+    if (exact) return exact;
+    const match = allTags.find(
+      (t) => t.toLowerCase().includes(v.toLowerCase()) && !selectedTags.includes(t)
+    );
+    return match ?? v;
   }
 
   function hideAutocomplete() {
@@ -294,7 +314,7 @@
 
     // Commit any tag text still in the input (user typed a tag but didn't press Enter)
     const pendingTag = $('#lqc-tag-input')?.value.trim();
-    if (pendingTag) addTag(pendingTag);
+    if (pendingTag) addTag(resolvePendingTag(pendingTag));
 
     btn.disabled = true;
     btn.textContent = 'Saving…';
@@ -740,6 +760,11 @@
       background: #f5f3ff;
       color: #4f46e5;
     }
+    .lqc-ac-create {
+      font-style: italic;
+      color: #6b7280;
+      border-top: 1px solid #e5e7eb;
+    }
 
     /* ── Highlight ── */
     #lqc-highlight-section { display: flex; flex-direction: column; gap: 5px; }
@@ -918,11 +943,12 @@
       closeModal();
     });
 
-    // ESC to close (capture phase so page handlers don't fire)
+    // ESC to close. Bubble phase: capture-phase stopPropagation on the shadow
+    // root would kill the event before it reaches the inputs' own handlers.
     root.addEventListener('keydown', (e) => {
       e.stopPropagation(); // don't leak keypresses to page
       if (e.key === 'Escape') closeModal();
-    }, true);
+    }, false);
 
     // Tab switching
     $$('.lqc-tab').forEach((tab) =>
@@ -939,11 +965,11 @@
       const matches = allTags.filter(
         (t) => t.toLowerCase().includes(val.toLowerCase()) && !selectedTags.includes(t)
       );
-      showAutocomplete(matches);
+      showAutocomplete(matches, val);
     });
 
     tagInput.addEventListener('keydown', (e) => {
-      const items = $$('.lqc-ac-item');
+      const items = $('#lqc-autocomplete').hidden ? [] : $$('.lqc-ac-item');
       if (e.key === 'ArrowDown') {
         e.preventDefault();
         moveAutocomplete(1);
@@ -954,8 +980,10 @@
         e.preventDefault();
         if (autocompleteIndex >= 0 && items[autocompleteIndex]) {
           addTag(items[autocompleteIndex].dataset.tag);
+        } else if (items.length) {
+          addTag(items[0].dataset.tag); // default to first suggestion
         } else if (tagInput.value.trim()) {
-          addTag(tagInput.value);
+          addTag(resolvePendingTag(tagInput.value)); // list dismissed — same resolution
         }
       } else if (e.key === 'Backspace' && !tagInput.value && selectedTags.length) {
         selectedTags.pop();
