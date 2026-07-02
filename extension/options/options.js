@@ -9,7 +9,8 @@ const FIELD_TYPES = ['text', 'number', 'date', 'checkbox', 'url', 'node'];
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
-let tagConfigs = []; // { tagName: string, fields: { name: string, type: string }[] }[]
+let tagConfigs = []; // { tagName: string, graph?: string, fields: { name: string, type: string }[] }[]
+let graphSettings = {}; // { [graphName]: { capturePage } } — Known Graphs
 let editingIndex = -1; // -1 = new, ≥0 = editing existing
 
 // ── Load ──────────────────────────────────────────────────────────────────────
@@ -18,15 +19,22 @@ async function load() {
   const data = await browser.storage.sync.get({
     logseqApiToken: '',
     logseqApiPort: 12315,
-    defaultCapturePage: '',
     tagConfigs: [],
+    graphSettings: {},
   });
 
   document.getElementById('api-token').value = data.logseqApiToken;
   document.getElementById('api-port').value = data.logseqApiPort;
-  document.getElementById('default-page').value = data.defaultCapturePage;
   tagConfigs = data.tagConfigs;
+  graphSettings = data.graphSettings;
 
+  // Migration: configs predating graph binding bind to the only known graph
+  const known = Object.keys(graphSettings);
+  if (known.length === 1) {
+    tagConfigs.forEach((c) => { if (!c.graph) c.graph = known[0]; });
+  }
+
+  renderGraphList();
   renderTagConfigs();
 }
 
@@ -35,16 +43,54 @@ async function load() {
 async function saveSettings() {
   const status = document.getElementById('save-status');
   try {
+    document.querySelectorAll('#graph-list [data-graph]').forEach((input) => {
+      const g = graphSettings[input.dataset.graph];
+      if (g) g.capturePage = input.value.trim();
+    });
+
     await browser.storage.sync.set({
       logseqApiToken: document.getElementById('api-token').value.trim(),
       logseqApiPort: parseInt(document.getElementById('api-port').value, 10) || 12315,
-      defaultCapturePage: document.getElementById('default-page').value.trim(),
+      graphSettings,
       tagConfigs,
     });
     showStatus(status, 'Saved!', 'ok');
   } catch (err) {
     showStatus(status, `Error: ${err.message}`, 'err');
   }
+}
+
+// ── Known Graphs / capture pages ──────────────────────────────────────────────
+
+function renderGraphList() {
+  const list = document.getElementById('graph-list');
+  list.innerHTML = '';
+
+  const names = Object.keys(graphSettings);
+  if (!names.length) {
+    list.innerHTML =
+      '<p style="color:#9ca3af;font-size:13px;">No graphs seen yet — connect once ' +
+      '(e.g. Test connection above, or open the capture modal) and they will appear here.</p>';
+    return;
+  }
+
+  names.forEach((name) => {
+    const row = document.createElement('div');
+    row.className = 'field';
+
+    const label = document.createElement('label');
+    label.textContent = name;
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.placeholder = "Leave blank for this graph's daily journal";
+    input.value = graphSettings[name]?.capturePage ?? '';
+    input.dataset.graph = name;
+
+    row.appendChild(label);
+    row.appendChild(input);
+    list.appendChild(row);
+  });
 }
 
 function showStatus(el, text, type) {
@@ -96,6 +142,13 @@ async function testConnection() {
     const name = data?.name ?? data?.['graph/name'] ?? 'graph';
     result.textContent = `Connected to "${name}"`;
     result.className = 'test-result ok';
+
+    // A successful test observes the open graph — register it as a Known Graph
+    if (name && name !== 'graph' && !(name in graphSettings)) {
+      graphSettings[name] = { capturePage: '' };
+      await browser.storage.sync.set({ graphSettings });
+      renderGraphList();
+    }
   } catch {
     result.textContent = 'Could not reach Logseq — is it running with the HTTP API enabled?';
     result.className = 'test-result err';
@@ -122,7 +175,7 @@ function renderTagConfigs() {
 
     const name = document.createElement('span');
     name.className = 'tag-config-name';
-    name.textContent = cfg.tagName;
+    name.textContent = cfg.tagName + (cfg.graph ? ` — ${cfg.graph}` : ' — (no graph set)');
 
     const editBtn = document.createElement('button');
     editBtn.className = 'btn btn-secondary';
@@ -173,7 +226,19 @@ function openEditor(index) {
   const editor = document.getElementById('tag-editor');
   const title = document.getElementById('tag-editor-title');
   const nameInput = document.getElementById('te-tag-name');
+  const graphSelect = document.getElementById('te-tag-graph');
   const fieldsList = document.getElementById('te-fields-list');
+
+  const known = Object.keys(graphSettings);
+  graphSelect.innerHTML = known.length
+    ? ''
+    : '<option value="">(no graphs seen yet)</option>';
+  known.forEach((g) => {
+    const opt = document.createElement('option');
+    opt.value = g;
+    opt.textContent = g;
+    graphSelect.appendChild(opt);
+  });
 
   if (index === -1) {
     title.textContent = 'New tag config';
@@ -183,6 +248,7 @@ function openEditor(index) {
     const cfg = tagConfigs[index];
     title.textContent = `Edit #${cfg.tagName}`;
     nameInput.value = cfg.tagName;
+    if (cfg.graph) graphSelect.value = cfg.graph;
     fieldsList.innerHTML = '';
     (cfg.fields ?? []).forEach((f) => addFieldRow(f.name, f.type));
   }
@@ -240,6 +306,14 @@ function saveEditor() {
     return;
   }
 
+  // Graph binding is required once any graph is known; before first connection
+  // there is nothing to choose from, so an unbound config is allowed (no guard)
+  const graph = document.getElementById('te-tag-graph').value;
+  if (!graph && Object.keys(graphSettings).length) {
+    alert('Pick the graph this tag lives in.');
+    return;
+  }
+
   const fieldRows = document.getElementById('te-fields-list').querySelectorAll('.field-row');
   const fields = [];
   let valid = true;
@@ -262,9 +336,9 @@ function saveEditor() {
       alert(`A config for #${tagName} already exists.`);
       return;
     }
-    tagConfigs.push({ tagName, fields });
+    tagConfigs.push({ tagName, graph, fields });
   } else {
-    tagConfigs[editingIndex] = { tagName, fields };
+    tagConfigs[editingIndex] = { tagName, graph, fields };
   }
 
   renderTagConfigs();

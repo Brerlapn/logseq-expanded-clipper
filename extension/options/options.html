@@ -40,15 +40,13 @@
     <!-- Capture -->
     <section>
       <h2>Capture</h2>
+      <p class="hint">
+        Each graph the extension has seen open in Logseq appears here with its own capture
+        page. Leave a capture page blank to use that graph's daily journal. To add a graph
+        to this list, open it once in Logseq.
+      </p>
 
-      <div class="field">
-        <label for="default-page">Default capture page</label>
-        <input type="text" id="default-page" placeholder="Leave blank to use today's journal page">
-        <span class="field-hint">
-          Leave blank for today's journal. Enter a page name (e.g. <code>Inbox</code>) to always
-          capture there instead.
-        </span>
-      </div>
+      <div id="graph-list"></div>
     </section>
 
     <!-- Tag Configs -->
@@ -71,6 +69,14 @@
       <div class="field">
         <label for="te-tag-name">Tag name</label>
         <input type="text" id="te-tag-name" placeholder="e.g. music-recs (without #)">
+      </div>
+
+      <div class="field">
+        <label for="te-tag-graph">Graph</label>
+        <select id="te-tag-graph"></select>
+        <span class="field-hint">
+          The graph this tag lives in. Captures for this tag are guarded against it.
+        </span>
       </div>
 
       <div class="field">

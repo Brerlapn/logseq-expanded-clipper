@@ -19,6 +19,11 @@
   let capturedUrl = '';
   let capturedHighlight = '';
   let autocompleteIndex = -1;
+  let knownGraphs = [];       // Known Graphs: names observed open in Logseq
+  let graphSettings = {};     // { [graphName]: { capturePage } }
+  let targetGraph = '';       // Web Clipper Target Graph ('' = the open graph, no guard)
+  let currentGraphName = '';  // last observed open graph
+  let transportInfo = { name: 'http', capabilities: {} };
 
   // ─── DOM helpers ────────────────────────────────────────────────────────────
 
@@ -95,6 +100,7 @@
         url: capturedUrl,
         title: capturedTitle,
         highlight: capturedHighlight,
+        graph: targetGraph,
         tags: [...selectedTags],
         notes: $('#lqc-notes')?.value ?? '',
       };
@@ -271,6 +277,11 @@
       selectedTags = draft.tags ?? [];
       renderChips();
       if ($('#lqc-notes')) $('#lqc-notes').value = draft.notes ?? '';
+      if (typeof draft.graph === 'string') {
+        targetGraph = draft.graph;
+        populateGraphSelect();
+        loadTagsFromCache();
+      }
     } else {
       switchMode('tags');
       const sel = $('#lqc-tag-select');
@@ -290,11 +301,43 @@
     }
   }
 
+  // ─── Graph Guard ─────────────────────────────────────────────────────────────
+
+  // Baseline transports can only write to the open graph, so a capture aimed
+  // elsewhere must be blocked (the Retry/draft flow takes over). Routing
+  // transports satisfy the Target Graph directly and skip the guard.
+  async function enforceGraphGuard() {
+    const target = currentTargetGraph();
+    if (!target || transportInfo.capabilities?.routeWrites) return;
+
+    const cur = await apiCall('logseq.App.getCurrentGraph', []);
+    currentGraphName = cur?.name ?? cur?.['graph/name'] ?? '';
+
+    if (currentGraphName && currentGraphName !== target) {
+      throw new Error(
+        `Logseq has "${currentGraphName}" open, but this capture is aimed at "${target}". ` +
+        `Switch graphs in Logseq, then Retry.`
+      );
+    }
+
+    // Guard passed: the target graph is the open one — refresh its tag cache
+    refreshTagCache();
+  }
+
   // ─── Target page resolution ──────────────────────────────────────────────────
 
   async function getTargetPage() {
-    const { defaultCapturePage } = await browser.storage.sync.get({ defaultCapturePage: '' });
-    if (defaultCapturePage) return defaultCapturePage;
+    // Per-graph capture page; a capture following the open graph ('') uses
+    // the open graph's setting
+    let graphName = currentTargetGraph();
+    if (!graphName) {
+      try {
+        const cur = await apiCall('logseq.App.getCurrentGraph', []);
+        graphName = cur?.name ?? cur?.['graph/name'] ?? '';
+      } catch { /* journal fallback below */ }
+    }
+    const capturePage = graphSettings[graphName]?.capturePage ?? '';
+    if (capturePage) return capturePage;
 
     try {
       const configs = await apiCall('logseq.App.getUserConfigs', []);
@@ -321,6 +364,8 @@
     errEl.hidden = true;
 
     try {
+      await enforceGraphGuard();
+
       if (currentMode === 'clipper') {
         await saveWebClip();
       } else {
@@ -383,11 +428,34 @@
       throw new Error('Block created but no UUID returned — check Logseq HTTP API compatibility.');
     }
 
+    // Property identity in Logseq DB is the ident (e.g. :user.property/artist-oIjtKMtL),
+    // not the display name — writing by name mints a duplicate property entity.
+    // Resolve names to the graph's existing property idents first.
+    const propIdents = {};
+    try {
+      const rows = await apiCall('logseq.DB.datascriptQuery', [
+        '[:find ?title ?ident :where [?p :block/tags :logseq.class/Property] [?p :db/ident ?ident] [?p :block/title ?title]]',
+      ]);
+      if (Array.isArray(rows)) {
+        rows.forEach(([title, ident]) => {
+          if (!title || !ident) return;
+          const key = String(title).toLowerCase();
+          // Titles can collide (e.g. a real property and a plugin-namespaced
+          // duplicate from earlier testing) — the user's own property wins
+          const isUserProp = (id) => String(id).replace(/^:/, '').startsWith('user.property/');
+          if (!propIdents[key] || (isUserProp(ident) && !isUserProp(propIdents[key]))) {
+            propIdents[key] = ident;
+          }
+        });
+      }
+    } catch { /* fall back to names — properties may be created new */ }
+
     for (const el of $$('.lqc-prop-input')) {
       const val = el.type === 'checkbox' ? el.checked : el.value;
       const typed = el.dataset.type === 'number' ? (parseFloat(val) || val) : val;
       if (val !== '' && val !== false) {
-        await apiCall('logseq.Editor.upsertBlockProperty', [block.uuid, el.dataset.field, typed]);
+        const key = propIdents[el.dataset.field.toLowerCase()] ?? el.dataset.field;
+        await apiCall('logseq.Editor.upsertBlockProperty', [block.uuid, key, typed]);
       }
     }
   }
@@ -401,14 +469,28 @@
     capturedUrl = location.href;
     capturedHighlight = window.getSelection()?.toString().trim() ?? '';
 
-    const settings = await browser.storage.sync.get({ tagConfigs: [] });
+    const settings = await browser.storage.sync.get({
+      tagConfigs: [],
+      graphSettings: {},
+      webClipperTargetGraph: '',
+    });
     tagConfigs = settings.tagConfigs ?? [];
+    graphSettings = settings.graphSettings ?? {};
+    knownGraphs = Object.keys(graphSettings);
+    targetGraph = settings.webClipperTargetGraph;
+
+    try {
+      transportInfo = await browser.runtime.sendMessage({ type: 'LQC_TRANSPORT_INFO' }) ?? transportInfo;
+    } catch { /* keep defaults */ }
 
     if (!host) injectModal();
+
+    populateGraphSelect();
 
     // Reset to clean state
     selectedTags = [];
     switchMode('clipper');
+    await loadTagsFromCache();
     renderChips();
     $('#lqc-notes').value = '';
     $('#lqc-error').hidden = true;
@@ -437,7 +519,7 @@
     tagConfigs.forEach((cfg) => {
       const opt = document.createElement('option');
       opt.value = cfg.tagName;
-      opt.textContent = '#' + cfg.tagName;
+      opt.textContent = '#' + cfg.tagName + (cfg.graph ? ` (${cfg.graph})` : '');
       sel.appendChild(opt);
     });
     $('#lqc-tag-fields').innerHTML = '';
@@ -466,8 +548,8 @@
     host.hidden = false;
     modalVisible = true;
 
-    // Fetch tags for autocomplete (best-effort, non-blocking)
-    fetchAllTags();
+    // Observe the open graph + refresh its tag cache (best-effort, non-blocking)
+    refreshTagCache();
 
     setTimeout(() => $('#lqc-tag-input')?.focus(), 50);
   }
@@ -486,15 +568,62 @@
     btn.textContent = 'Save to Logseq';
   }
 
-  async function fetchAllTags() {
+  // ─── Target Graph / Tag Cache ────────────────────────────────────────────────
+
+  // The graph the current capture is aimed at ('' = follow the open graph)
+  function currentTargetGraph() {
+    if (currentMode === 'clipper') return targetGraph;
+    const cfg = tagConfigs.find((c) => c.tagName === $('#lqc-tag-select')?.value);
+    return cfg?.graph ?? '';
+  }
+
+  function populateGraphSelect() {
+    const sel = $('#lqc-graph-select');
+    sel.innerHTML = '<option value="">(the open graph)</option>';
+    knownGraphs.forEach((name) => {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = name;
+      sel.appendChild(opt);
+    });
+    sel.value = knownGraphs.includes(targetGraph) ? targetGraph : '';
+  }
+
+  // Autocomplete reads the Target Graph's cached tags, never the open graph's
+  async function loadTagsFromCache() {
+    const target = currentTargetGraph();
+    if (!target) return; // following the open graph — refreshTagCache fills allTags
+    const { tagCache } = await browser.storage.local.get({ tagCache: {} });
+    allTags = tagCache[target] ?? [];
+  }
+
+  // Fetch the OPEN graph's tags and cache them under its name; adopt them for
+  // autocomplete only when the open graph is (or acts as) the Target Graph
+  async function refreshTagCache() {
     try {
-      const result = await apiCall('logseq.Editor.getAllTags', []);
-      if (Array.isArray(result)) {
-        allTags = result
-          .map((t) => (typeof t === 'string' ? t : t['original-name'] ?? t.name ?? ''))
-          .filter(Boolean);
+      const cur = await apiCall('logseq.App.getCurrentGraph', []);
+      currentGraphName = cur?.name ?? cur?.['graph/name'] ?? '';
+      if (currentGraphName && !knownGraphs.includes(currentGraphName)) {
+        knownGraphs.push(currentGraphName);
+        populateGraphSelect();
       }
-    } catch { /* autocomplete just won't have suggestions */ }
+
+      const result = await apiCall('logseq.Editor.getAllTags', []);
+      const tags = Array.isArray(result)
+        ? result
+            .map((t) => (typeof t === 'string' ? t : t['original-name'] ?? t.name ?? ''))
+            .filter(Boolean)
+        : [];
+
+      if (currentGraphName) {
+        const { tagCache } = await browser.storage.local.get({ tagCache: {} });
+        tagCache[currentGraphName] = tags;
+        await browser.storage.local.set({ tagCache });
+      }
+
+      const target = currentTargetGraph();
+      if (!target || target === currentGraphName) allTags = tags;
+    } catch { /* autocomplete falls back to whatever the cache had */ }
   }
 
   // ─── CSS ─────────────────────────────────────────────────────────────────────
@@ -862,6 +991,13 @@
               <div class="lqc-meta-url" id="lqc-url-display"></div>
             </div>
 
+            <div class="lqc-field">
+              <label for="lqc-graph-select">Graph</label>
+              <select id="lqc-graph-select" class="lqc-input">
+                <option value="">(the open graph)</option>
+              </select>
+            </div>
+
             <div class="lqc-field lqc-ac-wrap">
               <label>Tags</label>
               <div id="lqc-tag-chips">
@@ -954,6 +1090,17 @@
     $$('.lqc-tab').forEach((tab) =>
       tab.addEventListener('click', () => switchMode(tab.dataset.mode))
     );
+
+    // Web Clipper: Target Graph selector (selection persists until changed)
+    $('#lqc-graph-select').addEventListener('change', async () => {
+      targetGraph = $('#lqc-graph-select').value;
+      browser.storage.sync.set({ webClipperTargetGraph: targetGraph }).catch(() => {});
+      allTags = [];
+      hideAutocomplete();
+      await loadTagsFromCache();
+      if (!targetGraph) refreshTagCache(); // following the open graph again
+      saveDraft();
+    });
 
     // Tag input
     const tagInput = $('#lqc-tag-input');
