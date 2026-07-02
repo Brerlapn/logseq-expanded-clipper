@@ -302,7 +302,9 @@ async function handleOp(message) {
         [?p :block/title ?pt]`;
 
     const rows = await cliQuery(message.graph,
-      `[:find ?pt ?ty :where ${tagMatch} [?p :logseq.property/type ?ty]]`);
+      `[:find ?pt ?ty ?card :where ${tagMatch}
+        [?p :logseq.property/type ?ty]
+        [?p :db/cardinality ?card]]`);
 
     // Choices ("closed value") properties only accept their predefined value
     // blocks — surface them so the modal can render a dropdown
@@ -318,13 +320,37 @@ async function handleOp(message) {
         (choicesByProp[prop] ??= []).push(title);
       });
 
+    // Node property suggestions: values already in use, plus every node of
+    // the property's constraint class when one is set (logseq.property/classes)
+    const suggestionsByProp = {};
+    const collect = (pairs) => pairs.forEach(([prop, title]) => {
+      if (!title) return;
+      (suggestionsByProp[prop] ??= new Set()).add(title);
+    });
+    collect(await cliQuery(message.graph,
+      `[:find ?pt ?vt :where ${tagMatch}
+        [?p :logseq.property/type :node]
+        [?p :db/ident ?a] [?b ?a ?v] [?v :block/title ?vt]]`));
+    collect(await cliQuery(message.graph,
+      `[:find ?pt ?nt :where ${tagMatch}
+        [?p :logseq.property/type :node]
+        [?p :logseq.property/classes ?cls]
+        [?n :block/tags ?cls] [?n :block/title ?nt]]`));
+
     const typeMap = {
       default: 'text', string: 'text', number: 'number', date: 'date',
       datetime: 'date', checkbox: 'checkbox', url: 'url', node: 'node',
     };
-    return rows.map(([name, type]) => {
-      const field = { name, type: typeMap[type] ?? 'text' };
+    return rows.map(([name, type, card]) => {
+      const field = {
+        name,
+        type: typeMap[type] ?? 'text',
+        cardinality: String(card).endsWith('many') ? 'many' : 'one',
+      };
       if (choicesByProp[name]?.length) field.choices = choicesByProp[name];
+      if (field.type === 'node' && !field.choices) {
+        field.suggestions = [...(suggestionsByProp[name] ?? [])].sort((a, b) => a.localeCompare(b));
+      }
       return field;
     });
   }
@@ -368,6 +394,12 @@ function clipProps(payload) {
   const props = {};
   for (const f of payload.fields ?? []) {
     if (f.value === '' || f.value === false || f.value == null) continue;
+    // Multi-value node fields (chips) arrive as arrays
+    if (Array.isArray(f.value)) {
+      const vals = f.value.map((v) => String(v).trim()).filter(Boolean);
+      if (vals.length) props[f.name] = vals;
+      continue;
+    }
     // Trim string values: choices ("closed value") properties resolve by
     // exact match against the existing choice blocks — " Slim" would mint
     // a new block and fail Logseq's validation instead of linking Slim
@@ -378,6 +410,15 @@ function clipProps(payload) {
     props[f.name] = typed;
   }
   return props;
+}
+
+// Tag Properties clips whose tag has a url property get a clean title as the
+// block text — the URL lives in the property, keeping table-view Name columns
+// readable. Everything else keeps the markdown link.
+function clipContent(payload) {
+  const urlInProps = payload.mode === 'tags'
+    && (payload.fields ?? []).some((f) => f.type === 'url' && String(f.value ?? '').trim());
+  return urlInProps ? payload.title : `[${payload.title}](${payload.url})`;
 }
 
 // ── CLI path: routes to any graph; tags matched case-insensitively and node
@@ -391,7 +432,7 @@ async function saveViaCli(payload) {
     'upsert', 'block',
     '--graph', graph,
     '--target-page', targetPage,
-    '--content', `[${payload.title}](${payload.url})`,
+    '--content', clipContent(payload),
   ];
   const tags = clipTags(payload);
   if (tags.length) args.push('--update-tags', edn(tags));
@@ -457,7 +498,7 @@ async function saveViaHttp(payload) {
   const tagStr = tags.length ? ' ' + tags.map((t) => `#${t}`).join(' ') : '';
   const block = await callLogseq('logseq.Editor.appendBlockInPage', [
     targetPage,
-    `[${payload.title}](${payload.url})${tagStr}`,
+    `${clipContent(payload)}${tagStr}`,
   ]);
   if (!block?.uuid) {
     throw new Error('Block created but no UUID returned — check Logseq HTTP API compatibility.');

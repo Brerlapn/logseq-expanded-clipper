@@ -82,7 +82,9 @@
     const tagName = $('#lqc-tag-select')?.value ?? '';
     const fields = {};
     $$('.lqc-prop-input').forEach((el) => {
-      fields[el.dataset.field] = el.type === 'checkbox' ? el.checked : el.value;
+      fields[el.dataset.field] = el.type === 'checkbox' ? el.checked
+        : el.dataset.multi ? [...(el._lqcValues ?? [])]
+        : el.value;
     });
     return { mode: 'tags', url: capturedUrl, title: capturedTitle, tagName, fields };
   }
@@ -177,7 +179,7 @@
   }
 
   function moveAutocomplete(dir) {
-    const items = $$('.lqc-ac-item');
+    const items = $('#lqc-autocomplete').querySelectorAll('.lqc-ac-item');
     if (!items.length) return;
     autocompleteIndex = Math.max(-1, Math.min(autocompleteIndex + dir, items.length - 1));
     items.forEach((el, i) => el.classList.toggle('lqc-ac-active', i === autocompleteIndex));
@@ -191,6 +193,142 @@
     $('#lqc-clipper-panel').hidden = mode !== 'clipper';
     $('#lqc-tags-panel').hidden = mode !== 'tags';
     resetSaveButton();
+  }
+
+  // ─── Node property field widget ──────────────────────────────────────────────
+  // Autocomplete over the graph's existing values for a node property (values
+  // in use + members of the property's constraint class), with an explicit
+  // Create row for new values — same interaction model as the tags field.
+  // Cardinality-many properties get chips; single-value ones a plain input.
+
+  function makeNodeField(field) {
+    const multi = field.cardinality === 'many';
+    const wrap = document.createElement('div');
+    wrap.className = 'lqc-node-wrap';
+
+    const box = document.createElement('div');
+    box.className = 'lqc-node-box';
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.autocomplete = 'off';
+    input.spellcheck = false;
+    input.className = 'lqc-node-input';
+    if (multi) {
+      input.placeholder = 'Add values…';
+      input.dataset.multi = '1';
+      input._lqcValues = [];
+    }
+    box.appendChild(input);
+
+    const list = document.createElement('div');
+    list.className = 'lqc-node-ac';
+    list.hidden = true;
+
+    wrap.appendChild(box);
+    wrap.appendChild(list);
+
+    let acIndex = -1;
+
+    function renderNodeChips() {
+      box.querySelectorAll('.lqc-chip').forEach((c) => c.remove());
+      input._lqcValues.forEach((val) => {
+        const chip = document.createElement('span');
+        chip.className = 'lqc-chip';
+        chip.textContent = val;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'lqc-chip-remove';
+        btn.setAttribute('aria-label', `Remove ${val}`);
+        btn.textContent = '×';
+        btn.addEventListener('click', () => {
+          input._lqcValues = input._lqcValues.filter((v) => v !== val);
+          renderNodeChips();
+          saveDraft();
+        });
+        chip.appendChild(btn);
+        box.insertBefore(chip, input);
+      });
+    }
+    if (multi) input._lqcRenderChips = renderNodeChips;
+
+    function hideList() {
+      list.hidden = true;
+      acIndex = -1;
+    }
+
+    function commit(val) {
+      const v = val.trim();
+      if (!v) return;
+      if (multi) {
+        if (!input._lqcValues.includes(v)) {
+          input._lqcValues.push(v);
+          renderNodeChips();
+        }
+        input.value = '';
+      } else {
+        input.value = v;
+      }
+      hideList();
+      saveDraft();
+    }
+
+    function showList() {
+      const q = input.value.trim();
+      list.innerHTML = '';
+      const taken = multi ? input._lqcValues : [];
+      const pool = (field.suggestions ?? []).filter((s) => !taken.includes(s));
+      const matches = q
+        ? pool.filter((s) => s.toLowerCase().includes(q.toLowerCase()))
+        : pool;
+      const entries = matches.slice(0, 8).map((s) => ({ val: s, create: false }));
+      const exists = (field.suggestions ?? []).some((s) => s.toLowerCase() === q.toLowerCase());
+      if (q && !exists && !taken.includes(q)) entries.push({ val: q, create: true });
+      if (!entries.length) { hideList(); return; }
+
+      entries.forEach(({ val, create }) => {
+        const item = document.createElement('div');
+        item.className = create ? 'lqc-ac-item lqc-ac-create' : 'lqc-ac-item';
+        item.dataset.val = val;
+        item.textContent = create ? `Create "${val}"` : val;
+        item.addEventListener('mousedown', (e) => {
+          e.preventDefault(); // prevent input blur
+          commit(val);
+        });
+        list.appendChild(item);
+      });
+      list.hidden = false;
+      acIndex = -1;
+    }
+
+    input.addEventListener('focus', showList);
+    input.addEventListener('input', showList);
+    input.addEventListener('blur', () => setTimeout(hideList, 150));
+    input.addEventListener('keydown', (e) => {
+      const items = list.hidden ? [] : Array.from(list.querySelectorAll('.lqc-ac-item'));
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        acIndex = Math.min(acIndex + 1, items.length - 1);
+        items.forEach((el, i) => el.classList.toggle('lqc-ac-active', i === acIndex));
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        acIndex = Math.max(acIndex - 1, -1);
+        items.forEach((el, i) => el.classList.toggle('lqc-ac-active', i === acIndex));
+      } else if (e.key === 'Enter' || (multi && e.key === ',')) {
+        e.preventDefault();
+        if (acIndex >= 0 && items[acIndex]) commit(items[acIndex].dataset.val);
+        else if (items.length) commit(items[0].dataset.val); // default to first suggestion
+        else if (input.value.trim()) commit(input.value);
+      } else if (multi && e.key === 'Backspace' && !input.value && input._lqcValues.length) {
+        input._lqcValues.pop();
+        renderNodeChips();
+        saveDraft();
+      } else if (e.key === 'Escape' && !list.hidden) {
+        e.stopPropagation(); // close the list, not the modal
+        hideList();
+      }
+    });
+
+    return { wrap, input };
   }
 
   // ─── Tag Properties field rendering ─────────────────────────────────────────
@@ -210,6 +348,7 @@
       label.htmlFor = `lqc-prop-${escHtml(field.name)}`;
 
       let input;
+      let mount = null; // widget fields append a wrapper, not the input itself
       if (field.choices?.length) {
         // Choices property: only the predefined values are valid — free text
         // would fail Logseq's closed-value validation at save time
@@ -225,6 +364,10 @@
           opt.textContent = choice;
           input.appendChild(opt);
         });
+      } else if (field.type === 'node' && Array.isArray(field.suggestions)) {
+        const widget = makeNodeField(field);
+        input = widget.input;
+        mount = widget.wrap;
       } else if (field.type === 'checkbox') {
         input = document.createElement('input');
         input.type = 'checkbox';
@@ -243,6 +386,10 @@
         if (field.type === 'number') input.step = 'any';
       }
 
+      // Auto-fill the clip URL into url-typed fields (visible and editable);
+      // when saved with a value there, the block text becomes the plain title
+      if (field.type === 'url' && capturedUrl) input.value = capturedUrl;
+
       input.id = `lqc-prop-${field.name}`;
       input.className = (input.className || '') + ' lqc-prop-input';
       input.dataset.field = field.name;
@@ -251,7 +398,7 @@
       input.addEventListener('change', saveDraft);
 
       row.appendChild(label);
-      row.appendChild(input);
+      row.appendChild(mount ?? input);
       container.appendChild(row);
     });
   }
@@ -273,7 +420,12 @@
       });
       if (!resp?.ok || !Array.isArray(resp.result) || !resp.result.length) return;
 
-      const changed = JSON.stringify(resp.result) !== JSON.stringify(cfg.fields);
+      // Re-render only on structural change (fields/types/choices) — node
+      // suggestion lists drift constantly and a re-render wipes typed values
+      const structure = (fields) => JSON.stringify(
+        (fields ?? []).map(({ suggestions, ...rest }) => rest)
+      );
+      const changed = structure(resp.result) !== structure(cfg.fields);
       tagConfigs[idx] = { ...cfg, fields: resp.result, liveRead: true };
       browser.storage.sync.set({ tagConfigs }).catch(() => {});
       if (changed && $('#lqc-tag-select').value === tagName) renderTagFields(tagName);
@@ -307,7 +459,10 @@
             const el = root.querySelector(`.lqc-prop-input[data-field="${name}"]`);
             if (!el) return;
             if (el.type === 'checkbox') el.checked = val;
-            else el.value = val;
+            else if (el.dataset.multi && Array.isArray(val)) {
+              el._lqcValues = [...val];
+              el._lqcRenderChips?.();
+            } else el.value = val;
           });
         }, 0);
       }
@@ -338,7 +493,10 @@
     const fields = Array.from($$('.lqc-prop-input')).map((el) => ({
       name: el.dataset.field,
       type: el.dataset.type,
-      value: el.type === 'checkbox' ? el.checked : el.value,
+      value: el.type === 'checkbox' ? el.checked
+        // Multi-value chips, plus any text still in the input (commit on save)
+        : el.dataset.multi ? [...(el._lqcValues ?? []), ...(el.value.trim() ? [el.value.trim()] : [])]
+        : el.value,
     }));
     return {
       mode: 'tags',
@@ -384,7 +542,10 @@
   async function openModal() {
     if (modalVisible) return;
 
-    capturedTitle = document.title;
+    // Prefer the page's own metadata title (og:title) — usually cleaner than
+    // document.title, which sites often suffix with the site name
+    capturedTitle = document.querySelector('meta[property="og:title"]')?.content?.trim()
+      || document.title;
     capturedUrl = location.href;
     capturedHighlight = window.getSelection()?.toString().trim() ?? '';
 
@@ -840,6 +1001,45 @@
       border-top: 1px solid #e5e7eb;
     }
 
+    /* ── Node property fields ── */
+    .lqc-node-wrap { position: relative; }
+    .lqc-node-box {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      align-items: center;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      padding: 6px 8px;
+      background: #fff;
+      cursor: text;
+    }
+    .lqc-node-box:focus-within {
+      border-color: #4f46e5;
+      box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.12);
+    }
+    .lqc-node-input {
+      border: none;
+      outline: none;
+      flex: 1;
+      min-width: 80px;
+      font-size: 13px;
+      background: transparent;
+      color: #111827;
+    }
+    .lqc-node-ac {
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0;
+      right: 0;
+      background: #fff;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+      z-index: 10;
+      overflow: hidden;
+    }
+
     /* ── Highlight ── */
     #lqc-highlight-section { display: flex; flex-direction: column; gap: 5px; }
     .lqc-highlight-label {
@@ -1061,7 +1261,8 @@
     });
 
     tagInput.addEventListener('keydown', (e) => {
-      const items = $('#lqc-autocomplete').hidden ? [] : $$('.lqc-ac-item');
+      const list = $('#lqc-autocomplete');
+      const items = list.hidden ? [] : list.querySelectorAll('.lqc-ac-item');
       if (e.key === 'ArrowDown') {
         e.preventDefault();
         moveAutocomplete(1);
