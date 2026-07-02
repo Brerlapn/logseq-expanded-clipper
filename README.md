@@ -136,6 +136,16 @@ No build tooling. Package with `npx web-ext build` from `extension/`; lint with
 `npx web-ext lint`. On Zen Browser, temporary directory add-ons don't work — test with a
 packaged (and for release, signed) `.xpi`.
 
+## Acknowledgements
+
+This extension is a clean rebuild, but it owes its inspiration to two projects:
+
+- [firefox-extension-logseq-quickcapture](https://github.com/benjypng/firefox-extension-logseq-quickcapture)
+  by benjypng/hkgnp — the original Firefox quick-capture extension for Logseq
+- [logseq-reference-manager](https://github.com/rsomani95/logseq-reference-manager) by
+  rsomani95 — the reference-management and web-clipping workflow this extension's capture
+  model grew out of
+
 ## License
 
 [MIT](LICENSE.md)
