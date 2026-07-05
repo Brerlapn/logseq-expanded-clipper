@@ -122,10 +122,31 @@ function createCliTransport() {
 
   // Run a CLI command with -o json and unwrap the {status, data} envelope
   async function cliJson(args) {
-    const out = await send('cli', [...args, '-o', 'json']);
+    let out;
+    try {
+      out = await send('cli', [...args, '-o', 'json']);
+    } catch (err) {
+      // Non-zero CLI exits (e.g. tag-not-found) reject here, before the parse
+      // below ever runs — the native host forwards the CLI's own stdout as the
+      // error message. Parse it so structured fields (phase/code) survive.
+      try {
+        const parsed = JSON.parse(err.message);
+        if (parsed?.status !== 'ok' && parsed?.error) {
+          err.detail = parsed.error;
+          if (parsed.error.message) {
+            err.message = parsed.error.code
+              ? `${parsed.error.code}: ${parsed.error.message}`
+              : parsed.error.message;
+          }
+        }
+      } catch { /* not JSON — leave as a plain error */ }
+      throw err;
+    }
     const parsed = JSON.parse(out);
     if (parsed?.status !== 'ok') {
-      throw new Error(parsed?.message || parsed?.error || 'Logseq CLI error');
+      const error = new Error(parsed?.error?.message ?? parsed?.message ?? 'Logseq CLI error');
+      error.detail = parsed?.error ?? parsed;
+      throw error;
     }
     return parsed.data;
   }
@@ -377,8 +398,23 @@ async function handleSaveOp(payload) {
       const cur = await callLogseq('logseq.App.getCurrentGraph', []);
       graph = cur?.name ?? cur?.['graph/name'] ?? '';
     }
-    if (graph) return saveViaCli({ ...payload, graph });
-    throw new Error('Pick a target graph — the open graph could not be determined.');
+    if (!graph) throw new Error('Pick a target graph — the open graph could not be determined.');
+
+    try {
+      return await saveViaCli({ ...payload, graph });
+    } catch (err) {
+      if (!err?.lqcFallback) throw err;
+
+      let open = '';
+      try {
+        const cur = await callLogseq('logseq.App.getCurrentGraph', []);
+        open = cur?.name ?? cur?.['graph/name'] ?? '';
+      } catch {
+        throw err; // couldn't confirm graph identity — surface the original error
+      }
+      if (open && open === graph) return saveViaHttp({ ...payload, graph });
+      throw err;
+    }
   }
   return saveViaHttp(payload);
 }
@@ -388,6 +424,38 @@ function clipTags(payload) {
     ? [payload.tagName]
     : [...(payload.tags ?? []), ...(payload.highlight ? ['highlight'] : [])];
   return tags.filter(Boolean);
+}
+
+// CLI-tier only: `upsert block --update-tags` resolves existing classes only,
+// so tags picked via the modal's explicit Create row must be minted first.
+async function ensureCliTags(payload, graph) {
+  const newTags = payload.newTags ?? [];
+  const mint = new Set(clipTags(payload).filter((t) => newTags.includes(t)));
+  // The auto-injected #highlight class is the sole sanctioned implicit tag
+  // creation — every other tag requires an explicit Create-row choice.
+  if (payload.highlight) mint.add('highlight');
+  for (const t of mint) {
+    await cliTransport.cliJson(['upsert', 'tag', '--graph', graph, '--name', t]);
+  }
+}
+
+// Unknown phases fail safe to a hard Retry — only a confirmed pre-apply
+// failure (tag resolution before any write) is safe to silently retry via
+// HTTP. A future pre-apply phase would need an explicit addition here.
+const isPreApplyCliError = (err) => err?.detail?.phase === 'resolve-options';
+
+// The HTTP rerun is further scoped to tags this save was allowed to mint
+// (explicit Create-row picks plus the sanctioned highlight class). A resolve
+// failure on any other tag — e.g. a typo'd Tag Properties config tagName — is
+// a diagnostic and must stay a hard error, not a silent rerun that would mint
+// the class. Membership is case-insensitive, matching --update-tags' insensitive
+// resolution.
+function isMintableTagError(err, payload) {
+  const failed = String(err?.detail?.tag ?? '').toLowerCase();
+  if (!failed) return false;
+  const mintable = [...(payload.newTags ?? [])];
+  if (payload.highlight) mintable.push('highlight');
+  return mintable.some((t) => t.toLowerCase() === failed);
 }
 
 function clipProps(payload) {
@@ -439,7 +507,19 @@ async function saveViaCli(payload) {
   const props = clipProps(payload);
   if (Object.keys(props).length) args.push('--update-properties', edn(props));
 
-  const data = await cliTransport.cliJson(args);
+  let data;
+  try {
+    await ensureCliTags(payload, graph);
+  } catch (err) {
+    err.lqcFallback = true;
+    throw err;
+  }
+  try {
+    data = await cliTransport.cliJson(args);
+  } catch (err) {
+    err.lqcFallback = isPreApplyCliError(err) && isMintableTagError(err, payload);
+    throw err;
+  }
   const blockId = data?.result?.[0];
   if (blockId == null) throw new Error('Clip saved but no block id returned by the CLI.');
 

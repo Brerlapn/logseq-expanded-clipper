@@ -13,6 +13,7 @@
   let modalVisible = false;
   let currentMode = 'clipper';
   let selectedTags = [];
+  let newTags = [];       // subset of selectedTags explicitly created via the Create row
   let allTags = [];
   let tagConfigs = [];
   let capturedTitle = '';
@@ -76,6 +77,7 @@
         highlight: capturedHighlight,
         graph: targetGraph,
         tags: [...selectedTags],
+        newTags: [...newTags],
         notes: $('#lqc-notes')?.value ?? '',
       };
     }
@@ -110,6 +112,7 @@
       btn.textContent = '×';
       btn.addEventListener('click', () => {
         selectedTags = selectedTags.filter((t) => t !== tag);
+        newTags = newTags.filter((t) => t !== tag);
         renderChips();
         saveDraft();
       });
@@ -118,12 +121,13 @@
     });
   }
 
-  function addTag(tag) {
+  function addTag(tag, isNew = false) {
     const t = tag.trim().replace(/^#/, '');
     if (t && !selectedTags.includes(t)) {
       selectedTags.push(t);
       renderChips();
     }
+    if (isNew && t && !newTags.some((x) => x.toLowerCase() === t.toLowerCase())) newTags.push(t);
     $('#lqc-tag-input').value = '';
     hideAutocomplete();
     saveDraft();
@@ -140,7 +144,8 @@
     // New tags are created only via an explicit "Create" row, never implicitly
     const q = query.trim().replace(/^#/, '');
     const exists = allTags.some((t) => t.toLowerCase() === q.toLowerCase());
-    if (q && !exists && !selectedTags.includes(q)) entries.push({ tag: q, create: true });
+    const taken = selectedTags.some((t) => t.toLowerCase() === q.toLowerCase());
+    if (q && !exists && !taken) entries.push({ tag: q, create: true });
 
     if (!entries.length) { list.hidden = true; autocompleteIndex = -1; return; }
 
@@ -151,7 +156,7 @@
       item.textContent = create ? `Create "#${tag}"` : tag;
       item.addEventListener('mousedown', (e) => {
         e.preventDefault(); // prevent input blur
-        addTag(tag);
+        addTag(tag, create);
       });
       list.appendChild(item);
     });
@@ -165,11 +170,14 @@
   function resolvePendingTag(val) {
     const v = val.trim().replace(/^#/, '');
     const exact = allTags.find((t) => t.toLowerCase() === v.toLowerCase());
-    if (exact) return exact;
+    if (exact) return { tag: exact, create: false };
     const match = allTags.find(
       (t) => t.toLowerCase().includes(v.toLowerCase()) && !selectedTags.includes(t)
     );
-    return match ?? v;
+    if (match) return { tag: match, create: false };
+    // Literal text counts as an explicit create only when the tag list actually
+    // loaded — with no list, "no match" doesn't mean the user saw a Create row
+    return { tag: v, create: allTags.length > 0 };
   }
 
   function hideAutocomplete() {
@@ -440,6 +448,7 @@
     if (draft.mode === 'clipper') {
       switchMode('clipper');
       selectedTags = draft.tags ?? [];
+      newTags = draft.newTags ?? [];
       renderChips();
       if ($('#lqc-notes')) $('#lqc-notes').value = draft.notes ?? '';
       if (typeof draft.graph === 'string') {
@@ -482,6 +491,7 @@
         title: capturedTitle,
         url: capturedUrl,
         tags: [...selectedTags],
+        newTags: [...newTags],
         notes: $('#lqc-notes').value.trim(),
         highlight: capturedHighlight,
       };
@@ -514,7 +524,10 @@
 
     // Commit any tag text still in the input (user typed a tag but didn't press Enter)
     const pendingTag = $('#lqc-tag-input')?.value.trim();
-    if (pendingTag) addTag(resolvePendingTag(pendingTag));
+    if (pendingTag) {
+      const { tag, create } = resolvePendingTag(pendingTag);
+      addTag(tag, create);
+    }
 
     btn.disabled = true;
     btn.textContent = 'Saving…';
@@ -579,6 +592,7 @@
 
     // Reset to clean state
     selectedTags = [];
+    newTags = [];
     switchMode('clipper');
     await loadTagsFromCache();
     renderChips();
@@ -1272,14 +1286,18 @@
       } else if (e.key === 'Enter' || e.key === ',') {
         e.preventDefault();
         if (autocompleteIndex >= 0 && items[autocompleteIndex]) {
-          addTag(items[autocompleteIndex].dataset.tag);
+          const item = items[autocompleteIndex];
+          addTag(item.dataset.tag, item.classList.contains('lqc-ac-create'));
         } else if (items.length) {
-          addTag(items[0].dataset.tag); // default to first suggestion
+          const item = items[0]; // default to first suggestion
+          addTag(item.dataset.tag, item.classList.contains('lqc-ac-create'));
         } else if (tagInput.value.trim()) {
-          addTag(resolvePendingTag(tagInput.value)); // list dismissed — same resolution
+          const { tag, create } = resolvePendingTag(tagInput.value); // list dismissed — same resolution
+          addTag(tag, create);
         }
       } else if (e.key === 'Backspace' && !tagInput.value && selectedTags.length) {
-        selectedTags.pop();
+        const removed = selectedTags.pop();
+        newTags = newTags.filter((t) => t !== removed);
         renderChips();
         saveDraft();
       }
