@@ -580,17 +580,23 @@ async function saveViaHttp(payload) {
     targetPage,
     `${clipContent(payload)}${tagStr}`,
   ]);
-  if (!block?.uuid) {
+  // When the anchor content mints a new inline class (e.g. the auto-injected
+  // #highlight the first time it appears in a graph) Logseq persists the block
+  // but returns no uuid. Recover it from the page instead of throwing —
+  // throwing strands the block that was already written, and Retry then
+  // appends a duplicate.
+  const uuid = block?.uuid ?? await recoverAppendedUuid(targetPage, payload);
+  if (!uuid) {
     throw new Error('Block created but no UUID returned — check Logseq HTTP API compatibility.');
   }
 
   if (payload.mode === 'clipper') {
     if (payload.notes) {
-      await callLogseq('logseq.Editor.insertBlock', [block.uuid, payload.notes, { sibling: false }]);
+      await callLogseq('logseq.Editor.insertBlock', [uuid, payload.notes, { sibling: false }]);
     }
     if (payload.highlight) {
       await callLogseq('logseq.Editor.insertBlock', [
-        block.uuid, `> ${payload.highlight}`, { sibling: false },
+        uuid, `> ${payload.highlight}`, { sibling: false },
       ]);
     }
     return;
@@ -620,8 +626,31 @@ async function saveViaHttp(payload) {
   const props = clipProps(payload);
   for (const [name, value] of Object.entries(props)) {
     const key = propIdents[name.toLowerCase()] ?? name;
-    await callLogseq('logseq.Editor.upsertBlockProperty', [block.uuid, key, value]);
+    await callLogseq('logseq.Editor.upsertBlockProperty', [uuid, key, value]);
   }
+}
+
+// appendBlockInPage can persist a block but return no uuid when its content
+// mints a new inline class. Find the just-appended anchor by the clip's URL
+// (content is `[title](url)`; falls back to the title when the URL lives in a
+// property) so children still attach and the save isn't retried into a dupe.
+async function recoverAppendedUuid(targetPage, payload) {
+  let tree;
+  try {
+    tree = await callLogseq('logseq.Editor.getPageBlocksTree', [targetPage]);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(tree) || !tree.length) return null;
+
+  const needle = payload.url || payload.title || '';
+  if (needle) {
+    for (let i = tree.length - 1; i >= 0; i--) {
+      if (String(tree[i]?.content ?? '').includes(needle)) return tree[i]?.uuid ?? null;
+    }
+    return null;
+  }
+  return tree[tree.length - 1]?.uuid ?? null;
 }
 
 async function httpTargetPage(graph) {
