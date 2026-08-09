@@ -2,3 +2,9 @@ extension/web-ext-artifacts/
 extension/.amo-upload-uuid
 *.xpi
 *.zip
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
+.beads/proxieddb/
