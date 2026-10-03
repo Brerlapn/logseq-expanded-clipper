@@ -179,10 +179,12 @@ async function detectCli() {
   }
 }
 
-detectCli();
+// Event-page wake race: the message that woke this page must not be answered
+// before detection settles, or every operation silently drops to HTTP.
+let cliReady = detectCli();
 
 browser.storage.onChanged.addListener((changes, area) => {
-  if (area === 'sync' && changes.cliEnabled) detectCli();
+  if (area === 'sync' && changes.cliEnabled) cliReady = detectCli();
 });
 
 function activeTransport() {
@@ -197,7 +199,7 @@ function activeTransport() {
 browser.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type !== 'LQC_API') return false;
 
-  callLogseq(message.method, message.args)
+  cliReady.then(() => callLogseq(message.method, message.args))
     .then(result => sendResponse({ ok: true, result }))
     .catch(err => sendResponse({ ok: false, error: err.message }));
 
@@ -206,19 +208,21 @@ browser.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
 browser.runtime.onMessage.addListener((message) => {
   if (message.type === 'LQC_TRANSPORT_INFO') {
-    const t = activeTransport();
-    return Promise.resolve({ name: t.name, capabilities: t.capabilities });
+    return cliReady.then(() => {
+      const t = activeTransport();
+      return { name: t.name, capabilities: t.capabilities };
+    });
   }
   if (message.type === 'LQC_CLI_DETECT') {
     return detectCli();
   }
   if (message.type === 'LQC_OP') {
-    return handleOp(message)
+    return cliReady.then(() => handleOp(message))
       .then((result) => ({ ok: true, result }))
       .catch((err) => ({ ok: false, error: err.message }));
   }
   if (message.type === 'LQC_SAVE') {
-    return handleSaveOp(message.payload)
+    return cliReady.then(() => handleSaveOp(message.payload))
       .then(() => ({ ok: true }))
       .catch((err) => ({ ok: false, error: err.message }));
   }

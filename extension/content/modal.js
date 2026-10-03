@@ -60,7 +60,7 @@
   }
 
   function clearPending() {
-    browser.storage.local.remove('lqcPending');
+    return browser.storage.local.remove('lqcPending');
   }
 
   async function getPending() {
@@ -88,7 +88,7 @@
         : el.dataset.multi ? [...(el._lqcValues ?? [])]
         : el.value;
     });
-    return { mode: 'tags', url: capturedUrl, title: capturedTitle, tagName, fields };
+    return { mode: 'tags', url: capturedUrl, title: capturedTitle, highlight: capturedHighlight, tagName, fields };
   }
 
   function saveDraft() {
@@ -442,8 +442,19 @@
 
   // ─── Restore a pending draft ─────────────────────────────────────────────────
 
+  // A draft belongs to the page it was captured on. Restoring it must bring
+  // that page's url/title/highlight back too, or Page A's notes and tags
+  // would be saved under Page B's URL.
+  function applyDraftPage(draft) {
+    if (typeof draft.url === 'string') capturedUrl = draft.url;
+    if (typeof draft.title === 'string') capturedTitle = draft.title;
+    capturedHighlight = typeof draft.highlight === 'string' ? draft.highlight : '';
+    renderPageMeta();
+  }
+
   function restoreDraft(draft) {
     if (!draft) return;
+    applyDraftPage(draft);
 
     if (draft.mode === 'clipper') {
       switchMode('clipper');
@@ -600,22 +611,7 @@
     $('#lqc-error').hidden = true;
     resetSaveButton();
 
-    // Populate page metadata
-    $('#lqc-title-display').textContent = capturedTitle;
-    $('#lqc-url-display').textContent = capturedUrl;
-    $('#lqc-tp-title-display').textContent = capturedTitle;
-    $('#lqc-tp-url-display').textContent = capturedUrl;
-
-    // Highlight section
-    if (capturedHighlight) {
-      $('#lqc-highlight-section').hidden = false;
-      const preview = capturedHighlight.length > 200
-        ? capturedHighlight.slice(0, 200) + '…'
-        : capturedHighlight;
-      $('#lqc-highlight-preview').textContent = preview;
-    } else {
-      $('#lqc-highlight-section').hidden = true;
-    }
+    renderPageMeta();
 
     // Tag Properties tab options
     const sel = $('#lqc-tag-select');
@@ -640,8 +636,9 @@
         restoreDraft(pending);
         notice.hidden = true;
       };
-      notice.querySelector('#lqc-pending-discard').onclick = () => {
-        clearPending();
+      notice.querySelector('#lqc-pending-discard').onclick = async () => {
+        await clearPending();
+        notice.querySelector('.lqc-pending-text').textContent = '';
         notice.hidden = true;
       };
     } else {
@@ -656,6 +653,23 @@
     refreshTagCache();
 
     setTimeout(() => $('#lqc-tag-input')?.focus(), 50);
+  }
+
+  function renderPageMeta() {
+    $('#lqc-title-display').textContent = capturedTitle;
+    $('#lqc-url-display').textContent = capturedUrl;
+    $('#lqc-tp-title-display').textContent = capturedTitle;
+    $('#lqc-tp-url-display').textContent = capturedUrl;
+
+    if (capturedHighlight) {
+      $('#lqc-highlight-section').hidden = false;
+      const preview = capturedHighlight.length > 200
+        ? capturedHighlight.slice(0, 200) + '…'
+        : capturedHighlight;
+      $('#lqc-highlight-preview').textContent = preview;
+    } else {
+      $('#lqc-highlight-section').hidden = true;
+    }
   }
 
   function closeModal() {
@@ -750,6 +764,9 @@
 
   const CSS = `
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    /* Author display:flex on a section would otherwise beat the hidden
+       attribute, leaving e.g. the pending notice on screen after Discard. */
+    [hidden] { display: none !important; }
 
     #lqc-overlay {
       position: fixed;
