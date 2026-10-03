@@ -493,8 +493,55 @@ function clipContent(payload) {
   return urlInProps ? payload.title : `[${payload.title}](${payload.url})`;
 }
 
-// ── CLI path: routes to any graph; tags matched case-insensitively and node
-// values linked to existing nodes by the CLI itself (verified 2026-07-02)
+// Node values of a class-constrained property go to the CLI as db ids. Given
+// a title, the CLI can mint an untagged value block under the property entity
+// instead, which never shows in the constraint tag's table (verified
+// 2026-10-03). A value with no matching node of the class comes from the
+// modal's explicit Create row, so it is created as a node of that class first.
+async function resolveNodeValues(payload, graph, props) {
+  for (const f of payload.fields ?? []) {
+    if (f.type !== 'node' || !(f.name in props)) continue;
+
+    const propMatch = `[?p :block/title ${JSON.stringify(f.name)}]
+        [?p :logseq.property/type :node]
+        [?p :logseq.property/classes ?cls]`;
+    const classes = (await cliQuery(graph,
+      `[:find ?cls ?clt ?ci :where ${propMatch}
+        [?cls :block/title ?clt] [?cls :db/ident ?ci]]`))
+      .filter(([, , ident]) => String(ident).startsWith('user.class/'));
+    if (!classes.length) continue; // unconstrained — the CLI links or creates by title
+    const [classId, classTitle] = classes[0];
+
+    const members = await cliQuery(graph,
+      `[:find ?n ?t :where ${propMatch} [?n :block/tags ?cls] [?n :block/title ?t]]`);
+
+    const toId = async (title) => {
+      const hit = members.find(([, t]) => t === title)
+        ?? members.find(([, t]) => String(t).toLowerCase() === title.toLowerCase());
+      if (hit) return hit[0];
+      const made = await cliTransport.cliJson([
+        'upsert', 'block', '--graph', graph, '--target-id', String(classId),
+        '--content', title, '--update-tags', edn([classTitle]),
+      ]);
+      const id = made?.result?.[0];
+      if (id == null) throw new Error(`Could not create "${title}" as a #${classTitle} node.`);
+      members.push([id, title]);
+      return id;
+    };
+
+    const value = props[f.name];
+    if (Array.isArray(value)) {
+      const ids = [];
+      for (const v of value) ids.push(await toId(v));
+      props[f.name] = ids;
+    } else {
+      props[f.name] = await toId(value);
+    }
+  }
+  return props;
+}
+
+// ── CLI path: routes to any graph; tags matched case-insensitively
 
 async function saveViaCli(payload) {
   const graph = payload.graph;
@@ -508,8 +555,6 @@ async function saveViaCli(payload) {
   ];
   const tags = clipTags(payload);
   if (tags.length) args.push('--update-tags', edn(tags));
-  const props = clipProps(payload);
-  if (Object.keys(props).length) args.push('--update-properties', edn(props));
 
   let data;
   try {
@@ -518,6 +563,8 @@ async function saveViaCli(payload) {
     err.lqcFallback = true;
     throw err;
   }
+  const props = await resolveNodeValues(payload, graph, clipProps(payload));
+  if (Object.keys(props).length) args.push('--update-properties', edn(props));
   try {
     data = await cliTransport.cliJson(args);
   } catch (err) {
