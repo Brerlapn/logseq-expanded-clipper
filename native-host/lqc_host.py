@@ -25,6 +25,11 @@ def find_cli():
     env_path = os.environ.get("LOGSEQ_CLI_PATH")
     if env_path and os.access(env_path, os.X_OK):
         return env_path
+    # Preferred over the app-managed `logseq` launcher, which runs from the
+    # AppImage's temporary mount and leaves db-workers that die with SIGBUS.
+    extracted = os.path.expanduser("~/.local/bin/logseq-extracted")
+    if os.access(extracted, os.X_OK):
+        return extracted
     on_path = shutil.which("logseq")
     if on_path:
         return on_path

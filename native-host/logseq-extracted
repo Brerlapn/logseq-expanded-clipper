@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# Run the Logseq CLI from an extracted copy of the Logseq AppImage.
+#
+# Why: launching the CLI through the AppImage itself makes a one-shot FUSE mount
+# that is torn down when the CLI exits, while the detached db-worker it spawned
+# still runs from that mount — the worker then dies with SIGBUS. An extracted
+# tree is ordinary files, so the worker keeps running.
+#
+# The copy follows the AppImage: when the AppImage's size or mtime changes, the
+# next call re-extracts once. Updating Logseq stays "replace the AppImage".
+#
+# Install: install -m 755 native-host/logseq-extracted ~/.local/bin/
+# Remove:  rm ~/.local/bin/logseq-extracted; rm -rf ~/AppImages/logseq-extracted*
+
+set -euo pipefail
+
+APPIMAGE="${LOGSEQ_APPIMAGE:-$HOME/AppImages/logseq.appimage}"
+EXTRACTED="${LOGSEQ_EXTRACTED_DIR:-$HOME/AppImages/logseq-extracted}"
+STAMP="$EXTRACTED/.source-stamp"
+LOCK="$EXTRACTED.lock"
+WORKER_PATTERN="^$EXTRACTED/logseq .*db-worker-node\.js.*--owner-source cli"
+
+source_stamp() { stat -L -c '%s %Y' "$APPIMAGE" 2>/dev/null; }
+
+is_current() {
+    [ -x "$EXTRACTED/logseq" ] && [ -f "$STAMP" ] && [ "$(cat "$STAMP")" = "$(source_stamp)" ]
+}
+
+# CLI-owned workers still running from the tree would hit the same SIGBUS-style
+# failure if it were swapped out from under them, so stop them first.
+stop_workers() {
+    pkill -f "$WORKER_PATTERN" || return 0
+    for _ in $(seq 50); do
+        pgrep -f "$WORKER_PATTERN" >/dev/null || return 0
+        sleep 0.1
+    done
+    pkill -KILL -f "$WORKER_PATTERN" || true
+}
+
+extract() {
+    local parent tmp stamp
+    parent="$(dirname "$EXTRACTED")"
+    # Holding the lock, so any leftovers are from an interrupted earlier run.
+    rm -rf "$parent"/.logseq-extract.*
+    stamp="$(source_stamp)"
+    tmp="$(mktemp -d "$parent/.logseq-extract.XXXXXX")"
+    ( cd "$tmp" && "$APPIMAGE" --appimage-extract >/dev/null 2>&1 ) || true
+    if [ ! -x "$tmp/squashfs-root/logseq" ] || [ ! -e "$tmp/squashfs-root/resources/app.asar" ]; then
+        rm -rf "$tmp"
+        return 1
+    fi
+    printf '%s\n' "$stamp" > "$tmp/squashfs-root/.source-stamp"
+    if [ -e "$EXTRACTED" ]; then
+        stop_workers
+        mv "$EXTRACTED" "$tmp/old"
+    fi
+    mv "$tmp/squashfs-root" "$EXTRACTED"
+    rm -rf "$tmp"
+}
+
+if ! is_current; then
+    if [ -x "$APPIMAGE" ]; then
+        exec 9>"$LOCK"
+        flock 9
+        # Another call may have finished the extraction while we waited.
+        if ! is_current; then
+            echo "logseq-extracted: updating CLI copy from $APPIMAGE" >&2
+            if ! extract; then
+                echo "logseq-extracted: could not extract $APPIMAGE" >&2
+                [ -x "$EXTRACTED/logseq" ] || exit 1
+                echo "logseq-extracted: continuing with the existing copy" >&2
+            fi
+        fi
+        # Close the lock before exec so the detached db-worker cannot inherit it.
+        exec 9>&-
+    elif [ ! -x "$EXTRACTED/logseq" ]; then
+        echo "logseq-extracted: AppImage not found: $APPIMAGE" >&2
+        exit 1
+    fi
+fi
+
+ELECTRON_RUN_AS_NODE=1 exec "$EXTRACTED/logseq" "$EXTRACTED/resources/app.asar/js/logseq-cli.js" "$@"

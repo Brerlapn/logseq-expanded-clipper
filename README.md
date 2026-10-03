@@ -61,6 +61,21 @@ and Logseq doesn't even need to be running.
 
 1. Install the Logseq CLI (the `logseq` binary must be on your PATH, in `~/.local/bin`,
    or pointed to by `LOGSEQ_CLI_PATH`).
+
+   **AppImage installs:** the `logseq` launcher the desktop app writes to `~/.local/bin`
+   runs from the AppImage's temporary mount, only works while the app is open, and leaves
+   background db-workers that crash (SIGBUS) after each write. Install the bundled wrapper
+   instead; the host prefers it when present:
+
+   ```sh
+   install -m 755 native-host/logseq-extracted ~/.local/bin/
+   ```
+
+   It runs the CLI from an extracted copy of `~/AppImages/logseq.appimage` (override with
+   `LOGSEQ_APPIMAGE`; about 500 MB at `~/AppImages/logseq-extracted`) and re-extracts by
+   itself whenever the AppImage changes, so updating Logseq is still just replacing the
+   AppImage. To undo: delete `~/.local/bin/logseq-extracted` and
+   `~/AppImages/logseq-extracted*`.
 2. Run the host installer from this repo:
 
    ```sh
