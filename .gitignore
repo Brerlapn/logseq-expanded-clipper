@@ -8,3 +8,6 @@ extension/.amo-upload-uuid
 *.db
 .beads-credential-key
 .beads/proxieddb/
+
+# Upstream reference clone (hkgnp/firefox-extension-logseq-quickcapture), has its own .git
+firefox-extension-logseq-quickcapture/
