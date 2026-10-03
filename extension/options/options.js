@@ -39,6 +39,24 @@ async function load() {
 
   renderGraphList();
   renderTagConfigs();
+  await mergeCliGraphs();
+}
+
+// CLI transport lists every graph on disk, so none has to be seen open in
+// Logseq first. Merged in memory; Save settings persists them.
+async function mergeCliGraphs() {
+  try {
+    const resp = await browser.runtime.sendMessage({ type: 'LQC_OP', op: 'listGraphs' });
+    if (!resp?.ok || !Array.isArray(resp.result)) return;
+    let added = false;
+    resp.result.forEach((name) => {
+      if (name && !(name in graphSettings)) {
+        graphSettings[name] = { capturePage: '' };
+        added = true;
+      }
+    });
+    if (added) renderGraphList();
+  } catch { /* baseline transport — Known Graphs stay observation-only */ }
 }
 
 // ── Save settings ─────────────────────────────────────────────────────────────
@@ -94,6 +112,7 @@ async function testCli() {
     if (status?.available) {
       result.textContent = `CLI connected (${(status.version ?? '').split('\n')[0]})`;
       result.className = 'test-result ok';
+      await mergeCliGraphs();
     } else {
       result.textContent = status?.error ?? 'CLI not reachable.';
       result.className = 'test-result err';
