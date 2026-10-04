@@ -272,6 +272,7 @@
     });
     list.hidden = false;
     tagPickIndex = -1;
+    list.scrollIntoView?.({ block: 'nearest' }); // the body scrolls; don't leave the list clipped
   }
 
   function pickTag(name) {
@@ -418,6 +419,7 @@
       });
       list.hidden = false;
       acIndex = -1;
+      list.scrollIntoView?.({ block: 'nearest' }); // the body scrolls; don't leave the list clipped
     }
 
     input.addEventListener('focus', showList);
@@ -1409,6 +1411,10 @@
     }
 
     /* ── Node property fields ── */
+    /* Tag Properties starts with only a Graph and a Tag box; without a floor
+       the modal is too short to show the tag list that opens under the box */
+    #lqc-tags-panel { min-height: 400px; }
+
     .lqc-node-wrap { position: relative; }
     .lqc-ac-graph { margin-left: 8px; font-size: 11px; color: #9ca3af; }
     .lqc-tag-status { margin-top: 4px; font-size: 11px; }
