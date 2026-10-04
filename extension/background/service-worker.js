@@ -183,6 +183,7 @@ function createCliTransport() {
 }
 
 let cliTransport = null;
+let cliUnavailableReason = ''; // why the CLI transport is not active, for the modal
 
 async function detectCli() {
   try {
@@ -190,14 +191,17 @@ async function detectCli() {
     const { cliEnabled } = await browser.storage.sync.get({ cliEnabled: false });
     if (!granted || !cliEnabled) {
       cliTransport = null;
+      cliUnavailableReason = 'CLI integration is not enabled';
       return { available: false, error: 'CLI integration is not enabled.' };
     }
     const t = createCliTransport();
     const version = await t.send('version');
     cliTransport = t;
+    cliUnavailableReason = '';
     return { available: true, version };
   } catch (err) {
     cliTransport = null;
+    cliUnavailableReason = `the Logseq CLI could not be reached (${err.message})`;
     return { available: false, error: err.message };
   }
 }
@@ -233,7 +237,7 @@ browser.runtime.onMessage.addListener((message) => {
   if (message.type === 'LQC_TRANSPORT_INFO') {
     return cliReady.then(() => {
       const t = activeTransport();
-      return { name: t.name, capabilities: t.capabilities };
+      return { name: t.name, capabilities: t.capabilities, reason: cliUnavailableReason };
     });
   }
   if (message.type === 'LQC_CLI_DETECT') {
@@ -451,6 +455,8 @@ const HIDDEN_IDENT_RE = /^(logseq\.|block\/|plugin\.property\.)/;
 
 async function getTagSchema(graph, tag) {
   const rows = await cliQuery(graph, SCHEMA_QUERY, edn([String(tag).toLowerCase()]));
+  // An unknown tag is an error, distinct from a tag that has no properties
+  if (!rows.length) throw new Error(`no tag named "${tag}" in graph "${graph}"`);
 
   // Several classes match when the graph has case-duplicate tags (Linux /
   // linux) — their schemas merge. Walk breadth-first so a tag's own

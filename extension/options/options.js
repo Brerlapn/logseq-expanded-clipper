@@ -44,19 +44,37 @@ async function load() {
 
 // CLI transport lists every graph on disk, so none has to be seen open in
 // Logseq first. Merged in memory; Save settings persists them.
+// The same list shows which stored graphs Logseq no longer has: those with no
+// capture page set are dropped, the rest are flagged for the user to remove.
+let cliGraphNames = null; // null = no CLI list to check Known Graphs against
+
 async function mergeCliGraphs() {
   try {
     const resp = await browser.runtime.sendMessage({ type: 'LQC_OP', op: 'listGraphs' });
-    if (!resp?.ok || !Array.isArray(resp.result)) return;
-    let added = false;
-    resp.result.forEach((name) => {
-      if (name && !(name in graphSettings)) {
-        graphSettings[name] = { capturePage: '' };
-        added = true;
-      }
+    if (!resp?.ok || !Array.isArray(resp.result) || !resp.result.length) {
+      cliGraphNames = null;
+      syncGraphInputs();
+      renderGraphList();
+      return;
+    }
+    cliGraphNames = resp.result;
+    syncGraphInputs();
+    cliGraphNames.forEach((name) => {
+      if (name && !(name in graphSettings)) graphSettings[name] = { capturePage: '' };
     });
-    if (added) renderGraphList();
+    Object.keys(graphSettings).forEach((name) => {
+      if (!cliGraphNames.includes(name) && !graphSettings[name]?.capturePage) delete graphSettings[name];
+    });
+    renderGraphList();
   } catch { /* baseline transport — Known Graphs stay observation-only */ }
+}
+
+// Capture-page text typed but not yet saved must survive a re-render
+function syncGraphInputs() {
+  document.querySelectorAll('#graph-list [data-graph]').forEach((input) => {
+    const g = graphSettings[input.dataset.graph];
+    if (g) g.capturePage = input.value.trim();
+  });
 }
 
 // ── Save settings ─────────────────────────────────────────────────────────────
@@ -141,8 +159,9 @@ function renderGraphList() {
     const row = document.createElement('div');
     row.className = 'field';
 
+    const missing = cliGraphNames !== null && !cliGraphNames.includes(name);
     const label = document.createElement('label');
-    label.textContent = name;
+    label.textContent = missing ? `${name} — not found in Logseq` : name;
 
     const input = document.createElement('input');
     input.type = 'text';
@@ -152,6 +171,22 @@ function renderGraphList() {
 
     row.appendChild(label);
     row.appendChild(input);
+
+    // Removable when Logseq no longer has the graph, or when there is no
+    // CLI list to tell (Known Graphs are otherwise add-only)
+    if (missing || cliGraphNames === null) {
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'btn btn-ghost';
+      remove.textContent = 'Remove';
+      remove.title = 'Forget this graph (applies when you save settings)';
+      remove.addEventListener('click', () => {
+        syncGraphInputs();
+        delete graphSettings[name];
+        renderGraphList();
+      });
+      row.appendChild(remove);
+    }
     list.appendChild(row);
   });
 }

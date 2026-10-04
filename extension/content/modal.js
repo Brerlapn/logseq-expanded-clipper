@@ -660,19 +660,55 @@
     });
   }
 
+  // Says where the shown fields came from. A failed or unavailable schema
+  // read used to leave saved (or no) fields with no explanation, which made
+  // a working feature look missing.
+  function setTagStatus(text, kind = 'warn') {
+    const el = $('#lqc-tag-status');
+    if (!el) return;
+    el.textContent = text;
+    el.className = `lqc-tag-status lqc-tag-status-${kind}`;
+    el.hidden = !text;
+  }
+
   async function loadTagSchema(tagName) {
-    if (!tagName || !transportInfo.capabilities?.readSchemas) return;
+    if (!tagName) { setTagStatus(''); return; }
     const idx = tagConfigs.findIndex((c) => c.tagName === tagName);
     const cfg = tagConfigs[idx];
-    const graph = cfg?.graph || effectiveGraph();
-    if (!cfg || !graph) return;
+    if (!cfg) { setTagStatus(''); return; }
+    // The fallback message depends on whether there is anything saved to show
+    const fallback = (why) => {
+      if (tpTagName !== tagName) return;
+      setTagStatus(cfg.fields?.length
+        ? `Using saved fields — ${why}.`
+        : `No fields to show — ${why}.`);
+    };
+
+    if (!transportInfo.capabilities?.readSchemas) {
+      fallback(transportInfo.reason || 'CLI integration is not enabled');
+      return;
+    }
+    const graph = cfg.graph || effectiveGraph();
+    if (!graph) {
+      fallback('no graph is selected and the open graph is not known yet');
+      return;
+    }
     if (cfg.adhoc) cfg.graph = graph;
+    setTagStatus('Reading fields from Logseq…', 'live');
 
     try {
       const resp = await browser.runtime.sendMessage({
         type: 'LQC_OP', op: 'getTagSchema', graph, tag: tagName,
       });
-      if (!resp?.ok || !Array.isArray(resp.result) || !resp.result.length) return;
+      if (!resp?.ok || !Array.isArray(resp.result)) {
+        fallback(`the read from Logseq failed: ${resp?.error ?? 'no response'}`);
+        return;
+      }
+      if (!resp.result.length) {
+        fallback(`#${tagName} has no properties in Logseq (${graph})`);
+        return;
+      }
+      if (tpTagName === tagName) setTagStatus(`Fields read from Logseq (${graph}).`, 'live');
 
       // Re-render only on structural change (fields/types/choices) — node
       // suggestion lists drift constantly and a re-render wipes typed values
@@ -690,7 +726,9 @@
       }
       persistTagConfigs();
       if (changed && tpTagName === tagName) renderTagFields(tagName);
-    } catch { /* cached fields remain */ }
+    } catch (err) {
+      fallback(`the read from Logseq failed: ${err.message}`); // cached fields remain
+    }
   }
 
   // ─── Restore a pending draft ─────────────────────────────────────────────────
@@ -909,6 +947,7 @@
     // Tag Properties: nothing picked yet
     tpTagName = '';
     $('#lqc-tag-pick').value = '';
+    setTagStatus('');
     hideTagPickList();
     $('#lqc-tag-fields').innerHTML = '';
     orphanValues = [];
@@ -1361,6 +1400,9 @@
     /* ── Node property fields ── */
     .lqc-node-wrap { position: relative; }
     .lqc-ac-graph { margin-left: 8px; font-size: 11px; color: #9ca3af; }
+    .lqc-tag-status { margin-top: 4px; font-size: 11px; }
+    .lqc-tag-status-live { color: #6b7280; }
+    .lqc-tag-status-warn { color: #92400e; }
     .lqc-node-box {
       display: flex;
       flex-wrap: wrap;
@@ -1544,6 +1586,7 @@
                 </div>
                 <div id="lqc-tag-pick-ac" class="lqc-node-ac" hidden></div>
               </div>
+              <div id="lqc-tag-status" class="lqc-tag-status" hidden></div>
             </div>
 
             <div id="lqc-tag-fields"></div>

@@ -38,10 +38,12 @@ Three extension surfaces, no framework:
 - `extension/background/service-worker.js` — the only piece with `host_permissions` for
   `http://localhost/*`. It does two things: (1) routes the `open-modal` command / toolbar click to the
   active tab, injecting `content/modal.js` on demand if it isn't already there (`browser.scripting.executeScript`
-  + a `window.__lqcOpen` check, falling back to injection on failure); (2) proxies all Logseq HTTP API
-  calls (`callLogseq`) on behalf of the content script, because content scripts cannot reliably make
-  cross-origin `fetch` calls to `localhost` themselves. The content script talks to it via
-  `browser.runtime.sendMessage({ type: 'LQC_API', method, args })`.
+  + a `window.__lqcOpen` check, falling back to injection on failure); (2) owns all Logseq traffic
+  behind one transport seam: the HTTP API (`callLogseq`), because content scripts cannot reliably make
+  cross-origin `fetch` calls to `localhost` themselves, and, when enabled, the Logseq CLI through the
+  native messaging host in `native-host/`. The content script talks to it via
+  `browser.runtime.sendMessage` with `LQC_API` (HTTP passthrough), `LQC_OP` (reads such as tags and
+  tag schemas) and `LQC_SAVE` (the save, composed in the background).
 - `extension/content/modal.js` — injected on demand (not statically declared in the manifest) as an
   overlay modal directly in the page (see `docs/adr/0002-content-script-modal-over-popup.md` for why this
   is a content-script overlay and not a toolbar popup). Contains both extension modes: Web Clipper and
@@ -51,10 +53,12 @@ Three extension surfaces, no framework:
   static per-tag field config editor for Tag Properties mode).
 
 Storage split:
-- `browser.storage.sync` — user settings: `logseqApiToken`, `logseqApiPort`, `defaultCapturePage`,
-  `tagConfigs` (the static tag→fields schema, see below).
+- `browser.storage.sync` — user settings: `logseqApiToken`, `logseqApiPort`, `cliEnabled`,
+  `graphSettings` (Known Graphs, each with its capture page), `webClipperTargetGraph` (the Target
+  Graph shared by both modes), `tagConfigs` (pinned tags and their field schema, see below).
 - `browser.storage.local` — `lqcPending`, the in-flight modal form state, written on every change and
-  cleared on successful save. This is the safety net described in "Save Failure Behavior" below.
+  cleared on successful save (the safety net described in "Save Failure Behavior" below); plus caches:
+  `tagCache`, `tagSuggestions`, `recentTagConfigs`.
 
 ### Key domain concepts (full glossary in `CONTEXT.md`)
 
@@ -65,28 +69,34 @@ Storage split:
   file-based property syntax `tags:: [[value]]` must **never** be used in this project — this is a
   DB-graph-only extension.
 - **Web Clipper mode** vs **Tag Properties mode**: Web Clipper captures URL/title/tags/notes/highlight
-  freeform. Tag Properties mode picks one tag and renders its configured fields as DB typed properties
-  via `upsertBlockProperty()` instead — no Notes/Highlight in this mode.
-- **Static Tag Config**: Tag Properties mode's field schema (tag name → list of `{name, type}`, type is
-  one of Logseq DB's 6 property types) is defined manually in extension settings, not read dynamically
-  from Logseq (`getTag()`'s schema-return shape was unconfirmed at project start — see
-  `docs/adr/0003-static-tag-config-over-dynamic-schema.md`). Read `docs/adr/0003-*` before adding any
-  dynamic schema-reading feature — it documents exactly why this was deferred and what would need
-  confirming first.
+  freeform. Tag Properties mode picks one tag and writes its fields as DB typed properties
+  instead: over the CLI transport by `db/ident` in the same `upsert block --update-properties` call
+  that creates the clip, over HTTP by `upsertBlockProperty()` per field after resolving names to
+  idents. It writes no Notes/Highlight; the modal lists anything typed that this mode won't save.
+- **Tag schema source**: with the CLI transport, Tag Properties mode reads a tag's schema live from
+  Logseq (`getTagSchema` in the service worker: properties keyed by `db/ident`, inherited ones
+  included), and any tag in the Target Graph can be picked. **Static Tag Config** — tag name → list of
+  `{name, type}` typed by hand in extension settings — is the baseline without the CLI and the source
+  of the pinned tags. See `docs/adr/0003-static-tag-config-over-dynamic-schema.md` (why static came
+  first) and `docs/adr/0004-*` (why dynamic reads go through the CLI, not `getTag()`).
 - **Save Failure Behavior**: on HTTP API failure, the modal stays open with an error + Retry button;
   it never silently drops user input.
 
 ### Design decisions to respect
 
-The three ADRs in `docs/adr/` are load-bearing — re-read the relevant one before changing:
+The four ADRs in `docs/adr/` are load-bearing — re-read the relevant one before changing:
 - Logseq integration transport (`0001`: HTTP API + Bearer token, not `x-callback-url`)
 - Capture UI mechanism (`0002`: injected content-script modal, not a toolbar popup)
 - Tag Properties schema source (`0003`: static settings config, not dynamic `getTag()` reads)
+- Transport (`0004`: HTTP API as the baseline, the Logseq CLI via a native messaging host as an
+  optional upgrade that routes to any graph, lists graphs, and reads tag schemas)
 
-`specification.md` is the original feature spec. `specification-updates.md` lists capabilities that have
-been requested but are **not yet implemented** (keyboard-only tag autocomplete, a graph selector, and
-having Tag Properties mode read/write a tag's *existing* Logseq properties instead of extension-defined
-duplicates) — check it before assuming a described behavior already exists in the code.
+`specification.md` is the original feature spec. `specification-updates.md` records later requests
+(keyboard-only tag autocomplete, a graph selector, and having Tag Properties mode read/write a tag's
+*existing* Logseq properties instead of extension-defined duplicates). All of them are **implemented**
+as of 1.3.8; its status block at the top says how. Verified API behaviors and the message/storage
+contracts live in `.claude/skills/logseq-clipper-dev/REFERENCE.md` — check it before guessing how
+Logseq's HTTP API or CLI behaves.
 
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:6cd5cc61 -->
