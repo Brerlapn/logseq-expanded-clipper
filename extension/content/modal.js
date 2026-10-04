@@ -94,8 +94,19 @@
     };
   }
 
+  // A draft is worth keeping only if it holds something the user entered: a
+  // tag chip, notes, a picked Tag Properties tag, or a typed value left
+  // without a field. An emptied form clears the stored draft, so the
+  // "Unsaved capture" bar never appears with nothing to restore.
+  function draftHasContent(draft) {
+    if (draft.tags?.length || draft.newTags?.length || String(draft.notes ?? '').trim()) return true;
+    return draft.mode === 'tags' && Boolean(draft.tagName || draft.orphans?.length);
+  }
+
   function saveDraft() {
-    savePending(collectDraft());
+    const draft = collectDraft();
+    if (draftHasContent(draft)) savePending(draft);
+    else clearPending();
   }
 
   // ─── Tag chips ──────────────────────────────────────────────────────────────

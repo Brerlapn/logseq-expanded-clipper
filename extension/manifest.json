@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Logseq Quick Capture",
-  "version": "1.3.9",
+  "version": "1.3.10",
   "description": "Quick capture from Firefox to Logseq DB",
   "browser_specific_settings": {
     "gecko": {
