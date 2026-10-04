@@ -19,6 +19,8 @@
   let capturedTitle = '';
   let capturedUrl = '';
   let capturedHighlight = '';
+  let orphanValues = []; // typed Tag Properties values with no field: [{key, name, value}]
+  let modeValuesDismissed = false; // notes/highlight notice dismissed for this capture
   let autocompleteIndex = -1;
   let knownGraphs = [];       // Known Graphs: names observed open in Logseq
   let graphSettings = {};     // { [graphName]: { capturePage } }
@@ -30,14 +32,6 @@
 
   const $ = (sel) => root.querySelector(sel);
   const $$ = (sel) => root.querySelectorAll(sel);
-
-  function escHtml(str) {
-    return str
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
-  }
 
   // ─── Background API proxy ───────────────────────────────────────────────────
 
@@ -88,7 +82,13 @@
         : el.dataset.multi ? [...(el._lqcValues ?? [])]
         : el.value;
     });
-    return { mode: 'tags', url: capturedUrl, title: capturedTitle, highlight: capturedHighlight, tagName, fields };
+    return {
+      mode: 'tags', url: capturedUrl, title: capturedTitle, highlight: capturedHighlight,
+      tagName, fields, orphans: orphanValues,
+      notes: $('#lqc-notes')?.value ?? '',
+      tags: [...selectedTags],
+      newTags: [...newTags],
+    };
   }
 
   function saveDraft() {
@@ -201,6 +201,7 @@
     $('#lqc-clipper-panel').hidden = mode !== 'clipper';
     $('#lqc-tags-panel').hidden = mode !== 'tags';
     resetSaveButton();
+    renderOrphanNote();
   }
 
   // ─── Node property field widget ──────────────────────────────────────────────
@@ -209,8 +210,17 @@
   // Create row for new values — same interaction model as the tags field.
   // Cardinality-many properties get chips; single-value ones a plain input.
 
+  // A field's identity is its property ident when a live schema read supplied
+  // one; titles are display only and can collide (URL vs url). Hand-typed
+  // static configs have just the name.
+  const fieldKey = (field) => field.ident ?? field.name;
+
+  // Suggestions are {id, title}; configs stored before idents hold bare titles
+  const suggestionTitle = (s) => (typeof s === 'string' ? s : s.title);
+
   function makeNodeField(field) {
     const multi = field.cardinality === 'many';
+    const titles = () => [...new Set((field.suggestions ?? []).map(suggestionTitle))];
     const wrap = document.createElement('div');
     wrap.className = 'lqc-node-wrap';
 
@@ -284,12 +294,12 @@
       const q = input.value.trim();
       list.innerHTML = '';
       const taken = multi ? input._lqcValues : [];
-      const pool = (field.suggestions ?? []).filter((s) => !taken.includes(s));
+      const pool = titles().filter((s) => !taken.includes(s));
       const matches = q
         ? pool.filter((s) => s.toLowerCase().includes(q.toLowerCase()))
         : pool;
       const entries = matches.slice(0, 8).map((s) => ({ val: s, create: false }));
-      const exists = (field.suggestions ?? []).some((s) => s.toLowerCase() === q.toLowerCase());
+      const exists = titles().some((s) => s.toLowerCase() === q.toLowerCase());
       if (q && !exists && !taken.includes(q)) entries.push({ val: q, create: true });
       if (!entries.length) { hideList(); return; }
 
@@ -339,13 +349,119 @@
     return { wrap, input };
   }
 
+  // ─── Typed values that lost their field ─────────────────────────────────────
+  // A value can end up with no field to live in: the tag was switched, the
+  // live schema changed under it, or a restored draft names a property the
+  // tag no longer shows. Such values are kept and shown so they can be
+  // hand-copied — the modal never drops typed input without saying so.
+
+  const hasValue = (v) => (Array.isArray(v) ? v.length > 0 : v !== '' && v !== false && v != null);
+
+  function snapshotFieldValues() {
+    return Array.from($$('.lqc-prop-input'))
+      .map((el) => ({
+        key: el.dataset.field,
+        name: el._lqcField?.name ?? el.dataset.field,
+        value: el.type === 'checkbox' ? el.checked
+          : el.dataset.multi ? [...(el._lqcValues ?? [])]
+          : el.value,
+        // the auto-filled clip URL is not typed input
+        auto: el.dataset.type === 'url' && el.value === capturedUrl,
+      }))
+      .filter((v) => !v.auto && hasValue(v.value))
+      .map(({ auto, ...v }) => v);
+  }
+
+  // Puts each value into the rendered field with the same key (or the same
+  // name, for values recorded before fields carried idents). Returns the
+  // values no field accepted.
+  function applyFieldValues(entries) {
+    const inputs = Array.from($$('.lqc-prop-input'));
+    const latest = new Map();
+    entries.forEach((e) => { if (hasValue(e.value)) latest.set(e.key, e); });
+    const unplaced = [];
+    latest.forEach((entry) => {
+      const el = inputs.find((i) => i.dataset.field === entry.key)
+        ?? inputs.find((i) => i._lqcField?.name === entry.key);
+      const val = entry.value;
+      if (!el) { unplaced.push(entry); return; }
+      if (el.type === 'checkbox') { el.checked = Boolean(val); return; }
+      if (el.dataset.multi) {
+        el._lqcValues = [].concat(val).map(String);
+        el._lqcRenderChips?.();
+        return;
+      }
+      const text = Array.isArray(val) ? val.join(', ') : String(val);
+      el.value = text;
+      // a dropdown or number/date input silently refuses a value it can't hold
+      if (el.value !== text) { el.value = ''; unplaced.push(entry); }
+    });
+    return unplaced;
+  }
+
+  // Tag Properties mode writes only its one tag and that tag's fields (spec),
+  // so tags and notes entered in Web Clipper and text selected on the page
+  // count as unsaved here too.
+  function unsavedModeValues() {
+    if (currentMode !== 'tags' || modeValuesDismissed) return [];
+    const out = [];
+    const notes = $('#lqc-notes')?.value.trim();
+    if (selectedTags.length) out.push({ key: 'tags', name: 'Tags', value: [...selectedTags] });
+    if (notes) out.push({ key: 'notes', name: 'Notes', value: notes });
+    if (capturedHighlight) out.push({ key: 'highlight', name: 'Highlight', value: capturedHighlight });
+    return out;
+  }
+
+  function renderOrphanNote() {
+    const container = $('#lqc-tag-fields');
+    if (!container) return;
+    container.querySelector('.lqc-orphan-note')?.remove();
+    const unsaved = [...orphanValues, ...unsavedModeValues()];
+    if (!unsaved.length) return;
+
+    const note = document.createElement('div');
+    note.className = 'lqc-orphan-note';
+    const lead = document.createElement('div');
+    lead.textContent = unsaved.length === 1
+      ? "This value isn't part of a visible property and won't be saved. Hand-copy it to save in a different field or note:"
+      : "These values aren't part of a visible property and won't be saved. Hand-copy them to save in a different field or note:";
+    note.appendChild(lead);
+    unsaved.forEach(({ key, name, value }) => {
+      const line = document.createElement('div');
+      line.className = 'lqc-orphan-value';
+      const label = name ?? String(key).replace(/^.*\//, '');
+      const shown = value === true ? 'checked' : [].concat(value).join(', ');
+      line.textContent = `${label}: ${shown}`;
+      note.appendChild(line);
+    });
+    const dismiss = document.createElement('button');
+    dismiss.type = 'button';
+    dismiss.className = 'lqc-orphan-dismiss';
+    dismiss.textContent = 'Dismiss';
+    dismiss.addEventListener('click', () => {
+      orphanValues = [];
+      modeValuesDismissed = true;
+      renderOrphanNote();
+      saveDraft();
+    });
+    note.appendChild(dismiss);
+    container.appendChild(note);
+  }
+
   // ─── Tag Properties field rendering ─────────────────────────────────────────
 
   function renderTagFields(tagName) {
     const config = tagConfigs.find((c) => c.tagName === tagName);
     const container = $('#lqc-tag-fields');
+    // Whatever is typed survives the re-render: values go back into the field
+    // with the same key, and the rest are shown as orphans, never dropped
+    const carried = [...orphanValues, ...snapshotFieldValues()];
     container.innerHTML = '';
-    if (!config?.fields?.length) return;
+    if (!config?.fields?.length) {
+      orphanValues = carried;
+      renderOrphanNote();
+      return;
+    }
 
     config.fields.forEach((field) => {
       const row = document.createElement('div');
@@ -353,7 +469,7 @@
 
       const label = document.createElement('label');
       label.textContent = field.name;
-      label.htmlFor = `lqc-prop-${escHtml(field.name)}`;
+      label.htmlFor = `lqc-prop-${fieldKey(field)}`;
 
       let input;
       let mount = null; // widget fields append a wrapper, not the input itself
@@ -372,7 +488,7 @@
           opt.textContent = choice;
           input.appendChild(opt);
         });
-      } else if (field.type === 'node' && Array.isArray(field.suggestions)) {
+      } else if (field.type === 'node' && (field.ident || Array.isArray(field.suggestions))) {
         const widget = makeNodeField(field);
         input = widget.input;
         mount = widget.wrap;
@@ -398,9 +514,10 @@
       // when saved with a value there, the block text becomes the plain title
       if (field.type === 'url' && capturedUrl) input.value = capturedUrl;
 
-      input.id = `lqc-prop-${field.name}`;
+      input.id = `lqc-prop-${fieldKey(field)}`;
       input.className = (input.className || '') + ' lqc-prop-input';
-      input.dataset.field = field.name;
+      input.dataset.field = fieldKey(field);
+      input._lqcField = field;
       input.dataset.type = field.type;
       input.addEventListener('input', saveDraft);
       input.addEventListener('change', saveDraft);
@@ -409,13 +526,44 @@
       row.appendChild(mount ?? input);
       container.appendChild(row);
     });
+
+    orphanValues = applyFieldValues(carried);
+    renderOrphanNote();
   }
 
   // ─── Live tag schema (CLI transport) ─────────────────────────────────────────
 
   // The graph's own schema is the source of truth: refresh the config from
-  // the tag's Target Graph, cache it, and re-render only if it changed
-  // (re-rendering wipes anything already typed into the fields).
+  // the tag's Target Graph, cache it, and re-render only if it changed.
+  // Suggestion lists can be large and drift constantly, so they live in
+  // storage.local; storage.sync (8 KB per item) keeps only the schema itself.
+  const suggestionCacheKey = (cfg) => `${cfg.graph ?? ''}\n${cfg.tagName}`;
+
+  function persistTagConfigs() {
+    const tagSuggestions = {};
+    const slim = tagConfigs.map((cfg) => ({
+      ...cfg,
+      fields: (cfg.fields ?? []).map(({ suggestions, ...rest }) => {
+        if (Array.isArray(suggestions)) {
+          (tagSuggestions[suggestionCacheKey(cfg)] ??= {})[fieldKey(rest)] = suggestions;
+        }
+        return rest;
+      }),
+    }));
+    browser.storage.sync.set({ tagConfigs: slim }).catch(() => {});
+    browser.storage.local.set({ tagSuggestions }).catch(() => {});
+  }
+
+  function applyCachedSuggestions(tagSuggestions) {
+    tagConfigs.forEach((cfg) => {
+      const cached = tagSuggestions?.[suggestionCacheKey(cfg)];
+      if (!cached) return;
+      (cfg.fields ?? []).forEach((f) => {
+        if (!Array.isArray(f.suggestions) && cached[fieldKey(f)]) f.suggestions = cached[fieldKey(f)];
+      });
+    });
+  }
+
   async function loadTagSchema(tagName) {
     if (!tagName || !transportInfo.capabilities?.readSchemas) return;
     const idx = tagConfigs.findIndex((c) => c.tagName === tagName);
@@ -434,8 +582,15 @@
         (fields ?? []).map(({ suggestions, ...rest }) => rest)
       );
       const changed = structure(resp.result) !== structure(cfg.fields);
-      tagConfigs[idx] = { ...cfg, fields: resp.result, liveRead: true };
-      browser.storage.sync.set({ tagConfigs }).catch(() => {});
+      if (changed) {
+        tagConfigs[idx] = { ...cfg, fields: resp.result, liveRead: true };
+      } else {
+        // Same structure, same order: refresh suggestions on the field objects
+        // the rendered widgets already hold
+        cfg.fields.forEach((f, i) => { f.suggestions = resp.result[i].suggestions; });
+        tagConfigs[idx] = { ...cfg, liveRead: true };
+      }
+      persistTagConfigs();
       if (changed && $('#lqc-tag-select').value === tagName) renderTagFields(tagName);
     } catch { /* cached fields remain */ }
   }
@@ -468,22 +623,24 @@
         loadTagsFromCache();
       }
     } else {
+      if ($('#lqc-notes')) $('#lqc-notes').value = draft.notes ?? '';
+      selectedTags = draft.tags ?? [];
+      newTags = draft.newTags ?? [];
+      renderChips();
       switchMode('tags');
       const sel = $('#lqc-tag-select');
       if (sel && draft.tagName) {
         sel.value = draft.tagName;
+        orphanValues = [];
         renderTagFields(draft.tagName);
         // field values need to wait for DOM to settle
         setTimeout(() => {
-          Object.entries(draft.fields ?? {}).forEach(([name, val]) => {
-            const el = root.querySelector(`.lqc-prop-input[data-field="${name}"]`);
-            if (!el) return;
-            if (el.type === 'checkbox') el.checked = val;
-            else if (el.dataset.multi && Array.isArray(val)) {
-              el._lqcValues = [...val];
-              el._lqcRenderChips?.();
-            } else el.value = val;
-          });
+          const entries = [
+            ...(Array.isArray(draft.orphans) ? draft.orphans : []),
+            ...Object.entries(draft.fields ?? {}).map(([key, value]) => ({ key, value })),
+          ];
+          orphanValues = [...orphanValues, ...applyFieldValues(entries)];
+          renderOrphanNote();
         }, 0);
       }
     }
@@ -511,14 +668,29 @@
     const tagName = $('#lqc-tag-select').value;
     if (!tagName) throw new Error('Please select a tag.');
     const cfg = tagConfigs.find((c) => c.tagName === tagName);
-    const fields = Array.from($$('.lqc-prop-input')).map((el) => ({
-      name: el.dataset.field,
-      type: el.dataset.type,
-      value: el.type === 'checkbox' ? el.checked
-        // Multi-value chips, plus any text still in the input (commit on save)
-        : el.dataset.multi ? [...(el._lqcValues ?? []), ...(el.value.trim() ? [el.value.trim()] : [])]
-        : el.value,
-    }));
+    const fields = Array.from($$('.lqc-prop-input')).map((el) => {
+      const def = el._lqcField ?? {};
+      const field = {
+        name: def.name ?? el.dataset.field,
+        type: el.dataset.type,
+        value: el.type === 'checkbox' ? el.checked
+          // Multi-value chips, plus any text still in the input (commit on save)
+          : el.dataset.multi ? [...(el._lqcValues ?? []), ...(el.value.trim() ? [el.value.trim()] : [])]
+          : el.value,
+      };
+      if (def.ident) field.ident = def.ident;
+      // Picked node suggestions travel with their db id so the save links
+      // that exact node; a title with no id is an explicit Create
+      if (def.type === 'node') {
+        const ids = {};
+        const picked = [].concat(field.value).map((v) => String(v).trim());
+        (def.suggestions ?? []).forEach((s) => {
+          if (typeof s === 'object' && picked.includes(s.title) && !(s.title in ids)) ids[s.title] = s.id;
+        });
+        if (Object.keys(ids).length) field.ids = ids;
+      }
+      return field;
+    });
     return {
       mode: 'tags',
       graph: cfg?.graph ?? '',
@@ -579,6 +751,10 @@
       webClipperTargetGraph: '',
     });
     tagConfigs = settings.tagConfigs ?? [];
+    try {
+      const { tagSuggestions } = await browser.storage.local.get({ tagSuggestions: {} });
+      applyCachedSuggestions(tagSuggestions);
+    } catch { /* suggestions arrive with the live schema read */ }
     graphSettings = settings.graphSettings ?? {};
     knownGraphs = Object.keys(graphSettings);
     targetGraph = settings.webClipperTargetGraph;
@@ -623,6 +799,8 @@
       sel.appendChild(opt);
     });
     $('#lqc-tag-fields').innerHTML = '';
+    orphanValues = [];
+    modeValuesDismissed = false;
 
     // Pending capture notice
     const pending = await getPending();
@@ -670,6 +848,7 @@
     } else {
       $('#lqc-highlight-section').hidden = true;
     }
+    renderOrphanNote();
   }
 
   function closeModal() {
@@ -869,6 +1048,29 @@
       align-items: center;
       gap: 8px;
       flex-wrap: wrap;
+    }
+    .lqc-orphan-note {
+      margin-top: 8px;
+      padding: 8px 10px;
+      font-size: 12px;
+      color: #92400e;
+      background: #fffbeb;
+      border: 1px solid #fcd34d;
+      border-radius: 6px;
+      user-select: text;
+      max-height: 180px;
+      overflow-y: auto;
+    }
+    .lqc-orphan-value { margin-top: 4px; font-weight: 600; overflow-wrap: anywhere; }
+    .lqc-orphan-dismiss {
+      margin-top: 6px;
+      padding: 2px 8px;
+      font-size: 12px;
+      color: #92400e;
+      background: none;
+      border: 1px solid #fcd34d;
+      border-radius: 4px;
+      cursor: pointer;
     }
     .lqc-pending-text { flex: 1; font-size: 12px; color: #92400e; }
     #lqc-pending-restore, #lqc-pending-discard {

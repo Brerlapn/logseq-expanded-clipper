@@ -260,11 +260,23 @@ async function recordKnownGraph(name) {
 
 // ─── EDN encoding (CLI --update-tags / --update-properties) ──────────────────
 
+// A property key of this shape is a db/ident keyword (":user.property/x-Abc"),
+// emitted bare so the CLI writes that exact property instead of resolving a
+// display name — names collide (General has both URL and url).
+const IDENT_KEY_RE = /^:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.\-?!*+<>=]+$/;
+
+// Fields from a live schema read carry the property's ident; hand-typed
+// static configs only have a name.
+function propKey(field) {
+  const key = field.ident ? `:${String(field.ident).replace(/^:/, '')}` : '';
+  return IDENT_KEY_RE.test(key) ? key : field.name;
+}
+
 function edn(value) {
   if (Array.isArray(value)) return '[' + value.map(edn).join(' ') + ']';
   if (value && typeof value === 'object') {
     return '{' + Object.entries(value)
-      .map(([k, v]) => `${edn(String(k))} ${edn(v)}`)
+      .map(([k, v]) => `${IDENT_KEY_RE.test(k) ? k : edn(String(k))} ${edn(v)}`)
       .join(' ') + '}';
   }
   if (typeof value === 'string') return JSON.stringify(value);
@@ -319,75 +331,135 @@ async function handleOp(message) {
   }
 
   if (message.op === 'getTagSchema') {
-    const tagMatch = `[?c :block/tags :logseq.class/Tag]
-        [?c :block/title ?ct]
-        [(clojure.string/lower-case ?ct) ?lct]
-        [(= ?lct ${JSON.stringify(message.tag.toLowerCase())})]
-        [?c :logseq.property.class/properties ?p]
-        [?p :block/title ?pt]`;
-
-    const rows = await cliQuery(message.graph,
-      `[:find ?pt ?ty ?card :where ${tagMatch}
-        [?p :logseq.property/type ?ty]
-        [?p :db/cardinality ?card]]`);
-
-    // Choices ("closed value") properties only accept their predefined value
-    // blocks — surface them so the modal can render a dropdown
-    const choiceRows = await cliQuery(message.graph,
-      `[:find ?pt ?cvt ?cvo :where ${tagMatch}
-        [?cv :block/closed-value-property ?p]
-        [?cv :block/title ?cvt]
-        [?cv :block/order ?cvo]]`);
-    const choicesByProp = {};
-    choiceRows
-      .sort((a, b) => String(a[2]).localeCompare(String(b[2])))
-      .forEach(([prop, title]) => {
-        (choicesByProp[prop] ??= []).push(title);
-      });
-
-    // Node property suggestions: values already in use, plus every node of
-    // the property's constraint class when one is set (logseq.property/classes)
-    const suggestionsByProp = {};
-    const collect = (pairs) => pairs.forEach(([prop, title]) => {
-      if (!title) return;
-      (suggestionsByProp[prop] ??= new Set()).add(title);
-    });
-    collect(await cliQuery(message.graph,
-      `[:find ?pt ?vt :where ${tagMatch}
-        [?p :logseq.property/type :node]
-        [?p :db/ident ?a] [?b ?a ?v] [?v :block/title ?vt]]`));
-    collect(await cliQuery(message.graph,
-      `[:find ?pt ?nt :where ${tagMatch}
-        [?p :logseq.property/type :node]
-        [?p :logseq.property/classes ?cls]
-        [?n :block/tags ?cls] [?n :block/title ?nt]]`));
-
-    const typeMap = {
-      default: 'text', string: 'text', number: 'number', date: 'date',
-      datetime: 'date', checkbox: 'checkbox', url: 'url', node: 'node',
-    };
-    return rows.map(([name, type, card]) => {
-      const field = {
-        name,
-        type: typeMap[type] ?? 'text',
-        cardinality: String(card).endsWith('many') ? 'many' : 'one',
-      };
-      if (choicesByProp[name]?.length) field.choices = choicesByProp[name];
-      if (field.type === 'node' && !field.choices) {
-        field.suggestions = [...(suggestionsByProp[name] ?? [])].sort((a, b) => a.localeCompare(b));
-      }
-      return field;
-    });
+    return getTagSchema(message.graph, message.tag);
   }
 
   throw new Error(`Unknown op: ${message.op}`);
 }
 
-async function cliQuery(graph, query) {
-  const data = await cliTransport.cliJson([
-    'query', '--graph', graph, '--query', query.replace(/\s+/g, ' '),
-  ]);
+// `inputs` is an EDN vector string bound positionally after `$` — values
+// that come from the page or the graph go here, never into the query text
+async function cliQuery(graph, query, inputs) {
+  const args = ['query', '--graph', graph, '--query', query.replace(/\s+/g, ' ')];
+  if (inputs) args.push('--inputs', inputs.replace(/\s+/g, ' '));
+  const data = await cliTransport.cliJson(args);
   return data?.result ?? [];
+}
+
+// ─── Tag schema ───────────────────────────────────────────────────────────────
+// One pull returns the tag, its properties (with choices and constraint
+// classes) and, through the recursive extends element, every parent tag with
+// the same shape. Identity is the db/ident throughout; titles are display only.
+
+const SCHEMA_QUERY = `[:find (pull ?c [:db/id :db/ident :block/title
+    {:logseq.property.class/properties [:db/id :db/ident :block/title
+      :logseq.property/type :db/cardinality
+      :logseq.property/hide? :logseq.property/built-in?
+      {:logseq.property/classes [:db/id :db/ident :block/title]}
+      {:block/_closed-value-property [:db/id :block/title :block/order]}]}
+    {:logseq.property.class/extends ...}])
+  :in $ ?lct
+  :where [?c :block/tags :logseq.class/Tag]
+    [?c :block/title ?ct]
+    [(clojure.string/lower-case ?ct) ?lc]
+    [(= ?lc ?lct)]]`;
+
+// sub: a class or any class extending it. sugg: nodes already used as the
+// property's value, plus every node of its constraint class (or a subclass).
+const SUGGESTION_RULES = `[[(sub ?k ?c) [(identity ?c) ?k]]
+  [(sub ?k ?c) [?k :logseq.property.class/extends ?m] (sub ?m ?c)]
+  [(sugg ?p ?pi ?n) [?b ?pi ?n]]
+  [(sugg ?p ?pi ?n) [?p :logseq.property/classes ?cls] (sub ?k ?cls) [?n :block/tags ?k]]]`;
+
+const SCHEMA_TYPE_MAP = {
+  default: 'text', string: 'text', number: 'number', date: 'date',
+  datetime: 'date', checkbox: 'checkbox', url: 'url', node: 'node',
+};
+
+const HIDDEN_IDENT_RE = /^(logseq\.|block\/|plugin\.property\.)/;
+
+async function getTagSchema(graph, tag) {
+  const rows = await cliQuery(graph, SCHEMA_QUERY, edn([String(tag).toLowerCase()]));
+
+  // Several classes match when the graph has case-duplicate tags (Linux /
+  // linux) — their schemas merge. Walk breadth-first so a tag's own
+  // properties come before inherited ones; the first sighting of an ident wins.
+  const fields = [];
+  const seenProps = new Set();
+  const seenClasses = new Set();
+  let level = rows.map((r) => r[0]).filter(Boolean);
+  let inherited = false;
+  while (level.length) {
+    const next = [];
+    for (const cls of level) {
+      if (seenClasses.has(cls['db/id'])) continue;
+      seenClasses.add(cls['db/id']);
+      for (const p of cls['logseq.property.class/properties'] ?? []) {
+        const field = schemaField(p);
+        if (!field || seenProps.has(field.ident)) continue;
+        seenProps.add(field.ident);
+        if (inherited) field.inherited = true;
+        fields.push(field);
+      }
+      next.push(...(cls['logseq.property.class/extends'] ?? []));
+    }
+    level = next;
+    inherited = true;
+  }
+
+  await attachNodeSuggestions(graph, fields);
+  return fields;
+}
+
+function schemaField(p) {
+  const ident = String(p['db/ident'] ?? '');
+  const type = SCHEMA_TYPE_MAP[p['logseq.property/type']];
+  if (!ident || !type || !p['block/title']) return null;
+  if (HIDDEN_IDENT_RE.test(ident)) return null;
+  if (p['logseq.property/hide?'] || p['logseq.property/built-in?']) return null;
+
+  const field = {
+    name: p['block/title'],
+    ident,
+    type,
+    cardinality: String(p['db/cardinality']).endsWith('many') ? 'many' : 'one',
+  };
+  // Choices ("closed value") properties only accept their predefined value
+  // blocks — surface them so the modal can render a dropdown
+  const choices = (p['block/_closed-value-property'] ?? [])
+    .filter((c) => c['block/title'])
+    .sort((a, b) => {
+      const x = String(a['block/order'] ?? '');
+      const y = String(b['block/order'] ?? '');
+      return x < y ? -1 : x > y ? 1 : 0;
+    })
+    .map((c) => c['block/title']);
+  if (choices.length) field.choices = choices;
+  return field;
+}
+
+// Node fields get {id, title} suggestions so a pick can be saved as a db id
+// (the only value form that reliably links an existing node).
+async function attachNodeSuggestions(graph, fields) {
+  const nodeFields = fields.filter((f) =>
+    f.type === 'node' && !f.choices && IDENT_KEY_RE.test(`:${f.ident}`));
+  if (!nodeFields.length) return;
+
+  const idents = nodeFields.map((f) => `:${f.ident}`).join(' ');
+  const rows = await cliQuery(graph,
+    `[:find ?pi ?n ?nt :in $ % [?pi ...]
+      :where [?p :db/ident ?pi] (sugg ?p ?pi ?n) [?n :block/title ?nt]]`,
+    `[${SUGGESTION_RULES} [${idents}]]`);
+
+  const byIdent = {};
+  rows.forEach(([ident, id, title]) => {
+    if (!title) return;
+    (byIdent[ident] ??= new Map()).set(id, { id, title });
+  });
+  nodeFields.forEach((f) => {
+    f.suggestions = [...(byIdent[f.ident]?.values() ?? [])]
+      .sort((a, b) => a.title.localeCompare(b.title));
+  });
 }
 
 // ─── Save ─────────────────────────────────────────────────────────────────────
@@ -469,7 +541,7 @@ function clipProps(payload) {
     // Multi-value node fields (chips) arrive as arrays
     if (Array.isArray(f.value)) {
       const vals = f.value.map((v) => String(v).trim()).filter(Boolean);
-      if (vals.length) props[f.name] = vals;
+      if (vals.length) props[propKey(f)] = vals;
       continue;
     }
     // Trim string values: choices ("closed value") properties resolve by
@@ -479,7 +551,7 @@ function clipProps(payload) {
       : f.type === 'checkbox' ? Boolean(f.value)
       : String(f.value).trim();
     if (typed === '') continue;
-    props[f.name] = typed;
+    props[propKey(f)] = typed;
   }
   return props;
 }
@@ -493,29 +565,40 @@ function clipContent(payload) {
   return urlInProps ? payload.title : `[${payload.title}](${payload.url})`;
 }
 
-// Node values of a class-constrained property go to the CLI as db ids. Given
-// a title, the CLI can mint an untagged value block under the property entity
-// instead, which never shows in the constraint tag's table (verified
-// 2026-10-03). A value with no matching node of the class comes from the
-// modal's explicit Create row, so it is created as a node of that class first.
+// Node values go to the CLI as db ids wherever one is known — an id always
+// links that node, while a title can mint an untagged value block under the
+// property entity that never shows in the constraint tag's table (verified
+// 2026-10-03). Ids come from the picked suggestion (field.ids), else from a
+// title match among the constraint class's nodes. A value with neither comes
+// from the modal's explicit Create row: it is created as a node of the
+// constraint class first, or left as a title for an unconstrained property.
 async function resolveNodeValues(payload, graph, props) {
   for (const f of payload.fields ?? []) {
-    if (f.type !== 'node' || !(f.name in props)) continue;
+    const key = propKey(f);
+    if (f.type !== 'node' || !(key in props)) continue;
 
-    const propMatch = `[?p :block/title ${JSON.stringify(f.name)}]
+    const byIdent = key !== f.name;
+    const propMatch = `${byIdent ? '[?p :db/ident ?x]' : '[?p :block/title ?x]'}
         [?p :logseq.property/type :node]
         [?p :logseq.property/classes ?cls]`;
+    const propInput = byIdent ? key : edn(f.name);
     const classes = (await cliQuery(graph,
-      `[:find ?cls ?clt ?ci :where ${propMatch}
-        [?cls :block/title ?clt] [?cls :db/ident ?ci]]`))
+      `[:find ?cls ?clt ?ci :in $ ?x :where ${propMatch}
+        [?cls :block/title ?clt] [?cls :db/ident ?ci]]`, `[${propInput}]`))
       .filter(([, , ident]) => String(ident).startsWith('user.class/'));
-    if (!classes.length) continue; // unconstrained — the CLI links or creates by title
-    const [classId, classTitle] = classes[0];
+    const [classId, classTitle] = classes[0] ?? [];
 
-    const members = await cliQuery(graph,
-      `[:find ?n ?t :where ${propMatch} [?n :block/tags ?cls] [?n :block/title ?t]]`);
+    const members = classes.length
+      ? await cliQuery(graph,
+        `[:find ?n ?t :in $ % ?x :where ${propMatch}
+          (sub ?k ?cls) [?n :block/tags ?k] [?n :block/title ?t]]`,
+        `[${SUGGESTION_RULES} ${propInput}]`)
+      : [];
 
     const toId = async (title) => {
+      const picked = f.ids?.[title];
+      if (Number.isInteger(picked)) return picked;
+      if (!classes.length) return title; // unconstrained — the CLI links or creates by title
       const hit = members.find(([, t]) => t === title)
         ?? members.find(([, t]) => String(t).toLowerCase() === title.toLowerCase());
       if (hit) return hit[0];
@@ -529,13 +612,13 @@ async function resolveNodeValues(payload, graph, props) {
       return id;
     };
 
-    const value = props[f.name];
+    const value = props[key];
     if (Array.isArray(value)) {
       const ids = [];
       for (const v of value) ids.push(await toId(v));
-      props[f.name] = ids;
+      props[key] = ids;
     } else {
-      props[f.name] = await toId(value);
+      props[key] = await toId(value);
     }
   }
   return props;
@@ -676,7 +759,7 @@ async function saveViaHttp(payload) {
 
   const props = clipProps(payload);
   for (const [name, value] of Object.entries(props)) {
-    const key = propIdents[name.toLowerCase()] ?? name;
+    const key = IDENT_KEY_RE.test(name) ? name : (propIdents[name.toLowerCase()] ?? name);
     await callLogseq('logseq.Editor.upsertBlockProperty', [uuid, key, value]);
   }
 }
