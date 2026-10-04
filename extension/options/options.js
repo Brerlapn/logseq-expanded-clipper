@@ -202,7 +202,8 @@ async function testConnection() {
     }
 
     const data = await res.json();
-    const name = data?.name ?? data?.['graph/name'] ?? 'graph';
+    // The HTTP API reports the internal repo name ("logseq_db_General")
+    const name = String(data?.name ?? data?.['graph/name'] ?? 'graph').replace(/^logseq_db_/, '');
     result.textContent = `Connected to "${name}"`;
     result.className = 'test-result ok';
 

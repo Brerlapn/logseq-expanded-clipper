@@ -120,8 +120,31 @@ function createCliTransport() {
     });
   }
 
-  // Run a CLI command with -o json and unwrap the {status, data} envelope
+  // The CLI does not reject an unknown --graph: even a read silently creates
+  // an empty graph and spawns a worker for it. Every command that names a
+  // graph is checked against the CLI's own graph list first (re-read once on
+  // a miss, for graphs created since).
+  let graphNames = null;
+  async function knownGraphNames(refresh) {
+    if (!graphNames || refresh) graphNames = (await runJson(['graph', 'list']))?.graphs ?? [];
+    return graphNames;
+  }
+
   async function cliJson(args) {
+    const i = args.indexOf('--graph');
+    if (i !== -1) {
+      const graph = args[i + 1];
+      const known = (await knownGraphNames(false)).includes(graph)
+        || (await knownGraphNames(true)).includes(graph);
+      if (!known) {
+        throw new Error(`Logseq has no graph named "${graph}" — check the target graph in the extension settings.`);
+      }
+    }
+    return runJson(args);
+  }
+
+  // Run a CLI command with -o json and unwrap the {status, data} envelope
+  async function runJson(args) {
     let out;
     try {
       out = await send('cli', [...args, '-o', 'json']);
@@ -228,18 +251,66 @@ browser.runtime.onMessage.addListener((message) => {
   }
 });
 
+// The HTTP API reports the open graph by its internal repo name
+// ("logseq_db_General"); the CLI, the app UI and the user call it "General".
+// Names are normalised here, at the seam, so every comparison and every
+// stored Known Graph uses the one plain name.
+const plainGraphName = (name) => String(name ?? '').replace(/^logseq_db_/, '');
+
 async function callLogseq(method, args) {
   const result = await httpTransport.call(method, args);
 
   // Known Graphs accumulate by observation — every graph seen open in Logseq
   // becomes a Target Graph choice (there is deliberately no manual add)
-  if (method === 'logseq.App.getCurrentGraph') {
-    const name = result?.name ?? result?.['graph/name'];
+  if (method === 'logseq.App.getCurrentGraph' && result && typeof result === 'object') {
+    if (result.name) result.name = plainGraphName(result.name);
+    if (result['graph/name']) result['graph/name'] = plainGraphName(result['graph/name']);
+    const name = result.name ?? result['graph/name'];
     if (name) recordKnownGraph(name).catch(() => {});
   }
 
   return result;
 }
+
+// Migration: graph names stored before normalisation may carry the HTTP
+// API's "logseq_db_" prefix. Fold each into its plain name — a capture page
+// set under either name survives.
+async function migrateGraphNames() {
+  const sync = await browser.storage.sync.get({
+    graphSettings: {}, webClipperTargetGraph: '', tagConfigs: [],
+  });
+  const update = {};
+
+  const settings = {};
+  let settingsChanged = false;
+  for (const [name, value] of Object.entries(sync.graphSettings)) {
+    const plain = plainGraphName(name);
+    if (plain !== name) settingsChanged = true;
+    const capturePage = settings[plain]?.capturePage || value?.capturePage || '';
+    settings[plain] = { ...value, ...settings[plain], capturePage };
+  }
+  if (settingsChanged) update.graphSettings = settings;
+
+  if (plainGraphName(sync.webClipperTargetGraph) !== sync.webClipperTargetGraph) {
+    update.webClipperTargetGraph = plainGraphName(sync.webClipperTargetGraph);
+  }
+  if (sync.tagConfigs.some((c) => c.graph && plainGraphName(c.graph) !== c.graph)) {
+    update.tagConfigs = sync.tagConfigs.map((c) => (c.graph ? { ...c, graph: plainGraphName(c.graph) } : c));
+  }
+  if (Object.keys(update).length) await browser.storage.sync.set(update);
+
+  const { tagCache } = await browser.storage.local.get({ tagCache: {} });
+  const stale = Object.keys(tagCache).filter((g) => plainGraphName(g) !== g);
+  if (stale.length) {
+    stale.forEach((g) => {
+      tagCache[plainGraphName(g)] ??= tagCache[g];
+      delete tagCache[g];
+    });
+    await browser.storage.local.set({ tagCache });
+  }
+}
+
+migrateGraphNames().catch(() => {});
 
 async function recordKnownGraph(name) {
   const { graphSettings, defaultCapturePage } = await browser.storage.sync.get({
