@@ -780,6 +780,14 @@ async function saveViaHttp(payload) {
     }
   }
 
+  // Resolve property names before anything is written: if the lookup fails
+  // the save stops here, with no block created and nothing for a Retry to
+  // duplicate.
+  const props = payload.mode === 'tags' ? clipProps(payload) : {};
+  const propIdents = Object.keys(props).some((key) => !IDENT_KEY_RE.test(key))
+    ? await httpPropertyIdents()
+    : {};
+
   const targetPage = await httpTargetPage(payload.graph);
   const tags = await resolveTagCasing(clipTags(payload), payload.graph);
 
@@ -813,32 +821,40 @@ async function saveViaHttp(payload) {
     return;
   }
 
-  // Property identity in Logseq DB is the ident, not the display name —
-  // writing by name mints a plugin-namespaced duplicate. Resolve names to
-  // the graph's existing property idents first (user properties win title
-  // collisions with plugin-namespaced duplicates).
-  const propIdents = {};
-  try {
-    const rows = await callLogseq('logseq.DB.datascriptQuery', [
-      '[:find ?title ?ident :where [?p :block/tags :logseq.class/Property] [?p :db/ident ?ident] [?p :block/title ?title]]',
-    ]);
-    if (Array.isArray(rows)) {
-      const isUserProp = (id) => String(id).replace(/^:/, '').startsWith('user.property/');
-      rows.forEach(([title, ident]) => {
-        if (!title || !ident) return;
-        const key = String(title).toLowerCase();
-        if (!propIdents[key] || (isUserProp(ident) && !isUserProp(propIdents[key]))) {
-          propIdents[key] = ident;
-        }
-      });
-    }
-  } catch { /* fall back to names — properties may be created new */ }
-
-  const props = clipProps(payload);
   for (const [name, value] of Object.entries(props)) {
     const key = IDENT_KEY_RE.test(name) ? name : (propIdents[name.toLowerCase()] ?? name);
     await callLogseq('logseq.Editor.upsertBlockProperty', [uuid, key, value]);
   }
+}
+
+// Property identity in Logseq DB is the ident, not the display name — writing
+// by name mints a plugin-namespaced duplicate. Maps lowercased titles to the
+// graph's existing property idents (user properties win title collisions with
+// plugin-namespaced duplicates). A failed lookup is an error, never a reason
+// to write by name: Logseq answers "db-worker has not been initialized" while
+// its database worker is down or starting.
+async function httpPropertyIdents() {
+  let rows;
+  try {
+    rows = await callLogseq('logseq.DB.datascriptQuery', [
+      '[:find ?title ?ident :where [?p :block/tags :logseq.class/Property] [?p :db/ident ?ident] [?p :block/title ?title]]',
+    ]);
+  } catch (err) {
+    throw new Error(`Could not read the graph's properties from Logseq, so nothing was saved (${err.message}). Check that Logseq has finished loading, then Retry.`);
+  }
+  if (!Array.isArray(rows)) {
+    throw new Error("Could not read the graph's properties from Logseq, so nothing was saved. Check that Logseq has finished loading, then Retry.");
+  }
+  const isUserProp = (id) => String(id).replace(/^:/, '').startsWith('user.property/');
+  const propIdents = {};
+  rows.forEach(([title, ident]) => {
+    if (!title || !ident) return;
+    const key = String(title).toLowerCase();
+    if (!propIdents[key] || (isUserProp(ident) && !isUserProp(propIdents[key]))) {
+      propIdents[key] = ident;
+    }
+  });
+  return propIdents;
 }
 
 // appendBlockInPage can persist a block but return no uuid when its content
