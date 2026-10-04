@@ -19,6 +19,8 @@
   let capturedTitle = '';
   let capturedUrl = '';
   let capturedHighlight = '';
+  let tpTagName = '';         // Tag Properties: the picked tag ('' = none)
+  let tagPickIndex = -1;
   let orphanValues = []; // typed Tag Properties values with no field: [{key, name, value}]
   let modeValuesDismissed = false; // notes/highlight notice dismissed for this capture
   let autocompleteIndex = -1;
@@ -75,7 +77,7 @@
         notes: $('#lqc-notes')?.value ?? '',
       };
     }
-    const tagName = $('#lqc-tag-select')?.value ?? '';
+    const tagName = tpTagName;
     const fields = {};
     $$('.lqc-prop-input').forEach((el) => {
       fields[el.dataset.field] = el.type === 'checkbox' ? el.checked
@@ -85,6 +87,7 @@
     return {
       mode: 'tags', url: capturedUrl, title: capturedTitle, highlight: capturedHighlight,
       tagName, fields, orphans: orphanValues,
+      graph: configFor(tagName)?.graph || targetGraph,
       notes: $('#lqc-notes')?.value ?? '',
       tags: [...selectedTags],
       newTags: [...newTags],
@@ -202,6 +205,94 @@
     $('#lqc-tags-panel').hidden = mode !== 'tags';
     resetSaveButton();
     renderOrphanNote();
+  }
+
+  // ─── Tag Properties tag picker ───────────────────────────────────────────────
+  // Any tag in the Target Graph can be picked; its fields come from a live
+  // schema read. Tag configs saved in settings are pinned first, and are the
+  // only choices without the CLI transport (no schema read to render from).
+
+  const sameTag = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
+  const configFor = (tagName) => (tagName ? tagConfigs.find((c) => sameTag(c.tagName, tagName)) : undefined);
+  // The graph the mode works against; '' while following an open graph not yet observed
+  const effectiveGraph = () => targetGraph || currentGraphName;
+
+  function tagPickEntries(query) {
+    const q = query.trim().toLowerCase();
+    const pinned = tagConfigs.filter((c) => !c.adhoc)
+      .map((c) => ({ name: c.tagName, graph: c.graph ?? '', pinned: true }));
+    const rest = transportInfo.capabilities?.readSchemas
+      ? allTags.filter((t) => !pinned.some((p) => sameTag(p.name, t))).map((t) => ({ name: t }))
+      : [];
+    return [...pinned, ...rest].filter((e) => !q || e.name.toLowerCase().includes(q));
+  }
+
+  function hideTagPickList() {
+    const list = $('#lqc-tag-pick-ac');
+    if (list) list.hidden = true;
+    tagPickIndex = -1;
+  }
+
+  function showTagPickList() {
+    const input = $('#lqc-tag-pick');
+    const list = $('#lqc-tag-pick-ac');
+    list.textContent = '';
+    // With the picked tag still in the box, offer the whole list, not a filter on itself
+    const query = sameTag(input.value.trim(), tpTagName) ? '' : input.value;
+    const entries = tagPickEntries(query).slice(0, 8);
+    if (!entries.length) { hideTagPickList(); return; }
+
+    entries.forEach((entry) => {
+      const item = document.createElement('div');
+      item.className = 'lqc-ac-item';
+      item.dataset.tag = entry.name;
+      item.textContent = `${entry.pinned ? '★ ' : ''}#${entry.name}`;
+      if (entry.pinned && entry.graph) {
+        const graph = document.createElement('span');
+        graph.className = 'lqc-ac-graph';
+        graph.textContent = entry.graph;
+        item.appendChild(graph);
+      }
+      item.addEventListener('mousedown', (e) => {
+        e.preventDefault(); // prevent input blur
+        pickTag(entry.name);
+      });
+      list.appendChild(item);
+    });
+    list.hidden = false;
+    tagPickIndex = -1;
+  }
+
+  function pickTag(name) {
+    let cfg = configFor(name);
+    if (name && !cfg) {
+      cfg = { tagName: name, graph: effectiveGraph(), fields: [], adhoc: true };
+      tagConfigs.push(cfg);
+    } else if (cfg?.adhoc && effectiveGraph() && cfg.graph !== effectiveGraph()) {
+      // Remembered from another graph — those fields don't apply here
+      cfg.graph = effectiveGraph();
+      cfg.fields = [];
+    } else if (cfg && !cfg.adhoc && cfg.graph && cfg.graph !== targetGraph && knownGraphs.includes(cfg.graph)) {
+      setTargetGraph(cfg.graph); // a pinned tag brings its own graph
+    }
+    tpTagName = cfg?.tagName ?? '';
+    $('#lqc-tag-pick').value = tpTagName;
+    hideTagPickList();
+    renderTagFields(tpTagName);
+    loadTagSchema(tpTagName);
+    saveDraft();
+  }
+
+  // Settle whatever is typed in the box: an exact tag name is picked, an
+  // empty box clears the pick, a partial search reverts to the current pick
+  function resolveTagPick() {
+    const input = $('#lqc-tag-pick');
+    const text = input.value.trim();
+    if (sameTag(text, tpTagName)) { input.value = tpTagName; return; }
+    if (!text) { pickTag(''); return; }
+    const hit = tagPickEntries('').find((e) => sameTag(e.name, text));
+    if (hit) pickTag(hit.name);
+    else input.value = tpTagName;
   }
 
   // ─── Node property field widget ──────────────────────────────────────────────
@@ -550,8 +641,13 @@
         return rest;
       }),
     }));
-    browser.storage.sync.set({ tagConfigs: slim }).catch(() => {});
-    browser.storage.local.set({ tagSuggestions }).catch(() => {});
+    // Tags picked without a settings entry are remembered locally (offline
+    // fields, draft restore) — settings keeps only the configs saved there
+    browser.storage.sync.set({ tagConfigs: slim.filter((c) => !c.adhoc) }).catch(() => {});
+    browser.storage.local.set({
+      tagSuggestions,
+      recentTagConfigs: slim.filter((c) => c.adhoc && c.fields.length).slice(-30),
+    }).catch(() => {});
   }
 
   function applyCachedSuggestions(tagSuggestions) {
@@ -568,11 +664,13 @@
     if (!tagName || !transportInfo.capabilities?.readSchemas) return;
     const idx = tagConfigs.findIndex((c) => c.tagName === tagName);
     const cfg = tagConfigs[idx];
-    if (!cfg?.graph) return;
+    const graph = cfg?.graph || effectiveGraph();
+    if (!cfg || !graph) return;
+    if (cfg.adhoc) cfg.graph = graph;
 
     try {
       const resp = await browser.runtime.sendMessage({
-        type: 'LQC_OP', op: 'getTagSchema', graph: cfg.graph, tag: tagName,
+        type: 'LQC_OP', op: 'getTagSchema', graph, tag: tagName,
       });
       if (!resp?.ok || !Array.isArray(resp.result) || !resp.result.length) return;
 
@@ -591,7 +689,7 @@
         tagConfigs[idx] = { ...cfg, liveRead: true };
       }
       persistTagConfigs();
-      if (changed && $('#lqc-tag-select').value === tagName) renderTagFields(tagName);
+      if (changed && tpTagName === tagName) renderTagFields(tagName);
     } catch { /* cached fields remain */ }
   }
 
@@ -628,11 +726,23 @@
       newTags = draft.newTags ?? [];
       renderChips();
       switchMode('tags');
-      const sel = $('#lqc-tag-select');
-      if (sel && draft.tagName) {
-        sel.value = draft.tagName;
+      if (draft.graph && draft.graph !== targetGraph && knownGraphs.includes(draft.graph)) {
+        targetGraph = draft.graph;
+        populateGraphSelect();
+        loadTagsFromCache();
+      }
+      if (draft.tagName) {
+        // A tag picked without a settings entry may have no remembered config
+        if (!configFor(draft.tagName)) {
+          tagConfigs.push({
+            tagName: draft.tagName, graph: draft.graph || effectiveGraph(), fields: [], adhoc: true,
+          });
+        }
+        tpTagName = configFor(draft.tagName).tagName;
+        $('#lqc-tag-pick').value = tpTagName;
         orphanValues = [];
-        renderTagFields(draft.tagName);
+        renderTagFields(tpTagName);
+        loadTagSchema(tpTagName);
         // field values need to wait for DOM to settle
         setTimeout(() => {
           const entries = [
@@ -665,9 +775,9 @@
       };
     }
 
-    const tagName = $('#lqc-tag-select').value;
-    if (!tagName) throw new Error('Please select a tag.');
-    const cfg = tagConfigs.find((c) => c.tagName === tagName);
+    const tagName = tpTagName;
+    if (!tagName) throw new Error('Please pick a tag.');
+    const cfg = configFor(tagName);
     const fields = Array.from($$('.lqc-prop-input')).map((el) => {
       const def = el._lqcField ?? {};
       const field = {
@@ -693,7 +803,7 @@
     });
     return {
       mode: 'tags',
-      graph: cfg?.graph ?? '',
+      graph: cfg?.graph || targetGraph,
       title: capturedTitle,
       url: capturedUrl,
       tagName,
@@ -711,6 +821,8 @@
       const { tag, create } = resolvePendingTag(pendingTag);
       addTag(tag, create);
     }
+
+    if (currentMode === 'tags') resolveTagPick();
 
     btn.disabled = true;
     btn.textContent = 'Saving…';
@@ -752,7 +864,12 @@
     });
     tagConfigs = settings.tagConfigs ?? [];
     try {
-      const { tagSuggestions } = await browser.storage.local.get({ tagSuggestions: {} });
+      const { tagSuggestions, recentTagConfigs } = await browser.storage.local.get({
+        tagSuggestions: {}, recentTagConfigs: [],
+      });
+      recentTagConfigs.forEach((c) => {
+        if (c?.tagName && !configFor(c.tagName)) tagConfigs.push({ ...c, adhoc: true });
+      });
       applyCachedSuggestions(tagSuggestions);
     } catch { /* suggestions arrive with the live schema read */ }
     graphSettings = settings.graphSettings ?? {};
@@ -789,15 +906,10 @@
 
     renderPageMeta();
 
-    // Tag Properties tab options
-    const sel = $('#lqc-tag-select');
-    sel.innerHTML = '<option value="">Select a tag…</option>';
-    tagConfigs.forEach((cfg) => {
-      const opt = document.createElement('option');
-      opt.value = cfg.tagName;
-      opt.textContent = '#' + cfg.tagName + (cfg.graph ? ` (${cfg.graph})` : '');
-      sel.appendChild(opt);
-    });
+    // Tag Properties: nothing picked yet
+    tpTagName = '';
+    $('#lqc-tag-pick').value = '';
+    hideTagPickList();
     $('#lqc-tag-fields').innerHTML = '';
     orphanValues = [];
     modeValuesDismissed = false;
@@ -868,22 +980,34 @@
   // ─── Target Graph / Tag Cache ────────────────────────────────────────────────
 
   // The graph the current capture is aimed at ('' = follow the open graph)
+  // Both modes share one Target Graph selection
   function currentTargetGraph() {
-    if (currentMode === 'clipper') return targetGraph;
-    const cfg = tagConfigs.find((c) => c.tagName === $('#lqc-tag-select')?.value);
-    return cfg?.graph ?? '';
+    return targetGraph;
   }
 
   function populateGraphSelect() {
-    const sel = $('#lqc-graph-select');
-    sel.innerHTML = '<option value="">(the open graph)</option>';
-    knownGraphs.forEach((name) => {
-      const opt = document.createElement('option');
-      opt.value = name;
-      opt.textContent = name;
-      sel.appendChild(opt);
+    ['#lqc-graph-select', '#lqc-tp-graph-select'].forEach((id) => {
+      const sel = $(id);
+      sel.innerHTML = '<option value="">(the open graph)</option>';
+      knownGraphs.forEach((name) => {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = name;
+        sel.appendChild(opt);
+      });
+      sel.value = knownGraphs.includes(targetGraph) ? targetGraph : '';
     });
-    sel.value = knownGraphs.includes(targetGraph) ? targetGraph : '';
+  }
+
+  // The selection persists until changed
+  async function setTargetGraph(value) {
+    targetGraph = value;
+    browser.storage.sync.set({ webClipperTargetGraph: targetGraph }).catch(() => {});
+    populateGraphSelect();
+    allTags = [];
+    hideAutocomplete();
+    await loadTagsFromCache();
+    refreshTagCache();
   }
 
   // Autocomplete reads the Target Graph's cached tags, never the open graph's
@@ -1236,6 +1360,7 @@
 
     /* ── Node property fields ── */
     .lqc-node-wrap { position: relative; }
+    .lqc-ac-graph { margin-left: 8px; font-size: 11px; color: #9ca3af; }
     .lqc-node-box {
       display: flex;
       flex-wrap: wrap;
@@ -1404,10 +1529,21 @@
             </div>
 
             <div class="lqc-field">
-              <label for="lqc-tag-select">Tag</label>
-              <select id="lqc-tag-select" class="lqc-input">
-                <option value="">Select a tag…</option>
+              <label for="lqc-tp-graph-select">Graph</label>
+              <select id="lqc-tp-graph-select" class="lqc-input">
+                <option value="">(the open graph)</option>
               </select>
+            </div>
+
+            <div class="lqc-field">
+              <label for="lqc-tag-pick">Tag</label>
+              <div class="lqc-node-wrap">
+                <div class="lqc-node-box">
+                  <input id="lqc-tag-pick" class="lqc-node-input" type="text" placeholder="Type a tag…"
+                         autocomplete="off" spellcheck="false">
+                </div>
+                <div id="lqc-tag-pick-ac" class="lqc-node-ac" hidden></div>
+              </div>
             </div>
 
             <div id="lqc-tag-fields"></div>
@@ -1469,14 +1605,16 @@
       tab.addEventListener('click', () => switchMode(tab.dataset.mode))
     );
 
-    // Web Clipper: Target Graph selector (selection persists until changed)
-    $('#lqc-graph-select').addEventListener('change', async () => {
-      targetGraph = $('#lqc-graph-select').value;
-      browser.storage.sync.set({ webClipperTargetGraph: targetGraph }).catch(() => {});
-      allTags = [];
-      hideAutocomplete();
-      await loadTagsFromCache();
-      if (!targetGraph) refreshTagCache(); // following the open graph again
+    // Target Graph selectors — one shared selection, shown in both modes
+    $('#lqc-graph-select').addEventListener('change', async (e) => {
+      await setTargetGraph(e.target.value);
+      saveDraft();
+    });
+    $('#lqc-tp-graph-select').addEventListener('change', async (e) => {
+      await setTargetGraph(e.target.value);
+      // The picked tag belongs to the previous graph; typed values move to
+      // the unsaved-values note until a tag here takes them
+      if (tpTagName) pickTag('');
       saveDraft();
     });
 
@@ -1534,11 +1672,32 @@
       }
     });
 
-    // Tag Properties: tag select
-    $('#lqc-tag-select').addEventListener('change', (e) => {
-      renderTagFields(e.target.value);
-      loadTagSchema(e.target.value);
-      saveDraft();
+    // Tag Properties: tag picker
+    const tagPick = $('#lqc-tag-pick');
+    tagPick.addEventListener('focus', () => { tagPick.select(); showTagPickList(); });
+    tagPick.addEventListener('input', showTagPickList);
+    tagPick.addEventListener('blur', () => setTimeout(() => {
+      hideTagPickList();
+      if (modalVisible) resolveTagPick();
+    }, 150));
+    tagPick.addEventListener('keydown', (e) => {
+      const list = $('#lqc-tag-pick-ac');
+      const items = list.hidden ? [] : Array.from(list.querySelectorAll('.lqc-ac-item'));
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        tagPickIndex = e.key === 'ArrowDown'
+          ? Math.min(tagPickIndex + 1, items.length - 1)
+          : Math.max(tagPickIndex - 1, -1);
+        items.forEach((el, i) => el.classList.toggle('lqc-ac-active', i === tagPickIndex));
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        const item = items[tagPickIndex] ?? items[0]; // default to first suggestion
+        if (item) pickTag(item.dataset.tag);
+        else resolveTagPick();
+      } else if (e.key === 'Escape' && !list.hidden) {
+        e.stopPropagation(); // close the list, not the modal
+        hideTagPickList();
+      }
     });
 
     // Notes
