@@ -33,6 +33,35 @@ browser.runtime.onMessage.addListener((message) => {
   }
 });
 
+// ─── Device-local settings ───────────────────────────────────────────────────
+// The API token and the CLI switch stay in storage.local by default: on Chrome,
+// storage.sync travels through the user's Google account, and the CLI switch is
+// per profile anyway (the nativeMessaging grant is). `tokenSynced` (always
+// local) records that the user opted the token into storage.sync instead.
+// Installs predating this read their old sync values once and migrate.
+// Duplicated in options.js on purpose: no build step, no shared file.
+
+async function readToken() {
+  const { logseqApiToken, tokenSynced } = await browser.storage.local.get({ logseqApiToken: '', tokenSynced: false });
+  if (tokenSynced) return (await browser.storage.sync.get({ logseqApiToken: '' })).logseqApiToken;
+  if (logseqApiToken) return logseqApiToken;
+  const synced = (await browser.storage.sync.get({ logseqApiToken: '' })).logseqApiToken;
+  if (synced) await browser.storage.local.set({ tokenSynced: true }); // pre-toggle install: keep it where it is
+  return synced;
+}
+
+async function readCliEnabled() {
+  const local = await browser.storage.local.get('cliEnabled');
+  if ('cliEnabled' in local) return Boolean(local.cliEnabled);
+  const sync = await browser.storage.sync.get('cliEnabled');
+  if ('cliEnabled' in sync) {
+    await browser.storage.local.set({ cliEnabled: Boolean(sync.cliEnabled) });
+    await browser.storage.sync.remove('cliEnabled');
+    return Boolean(sync.cliEnabled);
+  }
+  return false;
+}
+
 // ─── Transport seam (ADR 0004) ────────────────────────────────────────────────
 // Two transports behind one seam. The HTTP API talks only to the graph
 // currently open in the app; the CLI (via native messaging) routes to any
@@ -43,10 +72,8 @@ const httpTransport = {
   capabilities: { routeWrites: false, listGraphs: false, readSchemas: false },
 
   async call(method, args) {
-    const { logseqApiToken, logseqApiPort } = await browser.storage.sync.get({
-      logseqApiToken: '',
-      logseqApiPort: 12315,
-    });
+    const logseqApiToken = await readToken();
+    const { logseqApiPort } = await browser.storage.sync.get({ logseqApiPort: 12315 });
 
     if (!logseqApiToken) {
       throw new Error('No API token configured — open extension settings to add one.');
@@ -192,7 +219,7 @@ let cliUnavailableReason = ''; // why the CLI transport is not active, for the m
 async function detectCli() {
   try {
     const granted = await browser.permissions.contains({ permissions: ['nativeMessaging'] });
-    const { cliEnabled } = await browser.storage.sync.get({ cliEnabled: false });
+    const cliEnabled = await readCliEnabled();
     if (!granted || !cliEnabled) {
       cliTransport = null;
       cliUnavailableReason = 'CLI integration is not enabled';
@@ -215,7 +242,7 @@ async function detectCli() {
 let cliReady = detectCli();
 
 browser.storage.onChanged.addListener((changes, area) => {
-  if (area === 'sync' && changes.cliEnabled) cliReady = detectCli();
+  if (area === 'local' && changes.cliEnabled) cliReady = detectCli();
 });
 
 function activeTransport() {

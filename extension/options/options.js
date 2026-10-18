@@ -16,23 +16,71 @@ let tagConfigs = []; // { tagName: string, graph?: string, fields: { name: strin
 let graphSettings = {}; // { [graphName]: { capturePage } } — Known Graphs
 let editingIndex = -1; // -1 = new, ≥0 = editing existing
 
+// ─── Device-local settings ───────────────────────────────────────────────────
+// The API token and the CLI switch stay in storage.local by default: on Chrome,
+// storage.sync travels through the user's Google account, and the CLI switch is
+// per profile anyway (the nativeMessaging grant is). `tokenSynced` (always
+// local) records that the user opted the token into storage.sync instead.
+// Installs predating this read their old sync values once and migrate.
+// Duplicated in service-worker.js on purpose: no build step, no shared file.
+
+async function readToken() {
+  const { logseqApiToken, tokenSynced } = await browser.storage.local.get({ logseqApiToken: '', tokenSynced: false });
+  if (tokenSynced) return (await browser.storage.sync.get({ logseqApiToken: '' })).logseqApiToken;
+  if (logseqApiToken) return logseqApiToken;
+  const synced = (await browser.storage.sync.get({ logseqApiToken: '' })).logseqApiToken;
+  if (synced) await browser.storage.local.set({ tokenSynced: true }); // pre-toggle install: keep it where it is
+  return synced;
+}
+
+async function readCliEnabled() {
+  const local = await browser.storage.local.get('cliEnabled');
+  if ('cliEnabled' in local) return Boolean(local.cliEnabled);
+  const sync = await browser.storage.sync.get('cliEnabled');
+  if ('cliEnabled' in sync) {
+    await browser.storage.local.set({ cliEnabled: Boolean(sync.cliEnabled) });
+    await browser.storage.sync.remove('cliEnabled');
+    return Boolean(sync.cliEnabled);
+  }
+  return false;
+}
+
+async function writeToken(value) {
+  const { tokenSynced } = await browser.storage.local.get({ tokenSynced: false });
+  if (tokenSynced) await browser.storage.sync.set({ logseqApiToken: value });
+  else await browser.storage.local.set({ logseqApiToken: value });
+}
+
+// Move the token between areas; the old copy is removed in the same step.
+async function setTokenSynced(on) {
+  const token = await readToken();
+  if (on) {
+    await browser.storage.sync.set({ logseqApiToken: token });
+    await browser.storage.local.set({ tokenSynced: true });
+    await browser.storage.local.remove('logseqApiToken');
+  } else {
+    await browser.storage.local.set({ logseqApiToken: token, tokenSynced: false });
+    await browser.storage.sync.remove('logseqApiToken');
+  }
+}
+
 // ── Load ──────────────────────────────────────────────────────────────────────
 
 async function load() {
   const data = await browser.storage.sync.get({
-    logseqApiToken: '',
     logseqApiPort: 12315,
     tagConfigs: [],
     graphSettings: {},
   });
 
-  document.getElementById('api-token').value = data.logseqApiToken;
+  document.getElementById('api-token').value = await readToken();
+  const { tokenSynced } = await browser.storage.local.get({ tokenSynced: false });
+  document.getElementById('token-synced').checked = tokenSynced;
   document.getElementById('api-port').value = data.logseqApiPort;
   tagConfigs = data.tagConfigs;
   graphSettings = data.graphSettings;
 
-  const { cliEnabled } = await browser.storage.sync.get({ cliEnabled: false });
-  document.getElementById('cli-enabled').checked = cliEnabled;
+  document.getElementById('cli-enabled').checked = await readCliEnabled();
 
   // Migration: configs predating graph binding bind to the only known graph
   const known = Object.keys(graphSettings);
@@ -90,14 +138,26 @@ async function saveSettings() {
       if (g) g.capturePage = input.value.trim();
     });
 
+    await writeToken(document.getElementById('api-token').value.trim());
     await browser.storage.sync.set({
-      logseqApiToken: document.getElementById('api-token').value.trim(),
       logseqApiPort: parseInt(document.getElementById('api-port').value, 10) || 12315,
       graphSettings,
       tagConfigs,
     });
     showStatus(status, 'Saved!', 'ok');
   } catch (err) {
+    showStatus(status, `Error: ${err.message}`, 'err');
+  }
+}
+
+async function toggleTokenSynced(on) {
+  const status = document.getElementById('save-status');
+  try {
+    await writeToken(document.getElementById('api-token').value.trim()); // keep an unsaved edit
+    await setTokenSynced(on);
+    showStatus(status, on ? 'Token moved to your browser sync store.' : 'Token now stored on this device only.', 'ok');
+  } catch (err) {
+    document.getElementById('token-synced').checked = !on;
     showStatus(status, `Error: ${err.message}`, 'err');
   }
 }
@@ -114,7 +174,7 @@ async function toggleCli(enabled) {
       return;
     }
   }
-  await browser.storage.sync.set({ cliEnabled: enabled });
+  await browser.storage.local.set({ cliEnabled: enabled });
   if (enabled) {
     await testCli();
   } else {
@@ -501,6 +561,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('save-settings').addEventListener('click', saveSettings);
   document.getElementById('test-connection').addEventListener('click', testConnection);
   document.getElementById('cli-enabled').addEventListener('change', (e) => toggleCli(e.target.checked));
+  document.getElementById('token-synced').addEventListener('change', (e) => toggleTokenSynced(e.target.checked));
   document.getElementById('cli-test').addEventListener('click', testCli);
   document.getElementById('add-tag-config').addEventListener('click', () => openEditor(-1));
   document.getElementById('te-add-field').addEventListener('click', () => addFieldRow());

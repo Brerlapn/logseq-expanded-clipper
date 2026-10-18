@@ -28,6 +28,15 @@
       </div>
 
       <div class="field">
+        <label>
+          <input type="checkbox" id="token-synced"> Sync the API token across my browser profiles
+        </label>
+        <span class="field-hint">Off: the token stays on this device. On: it is stored in your browser account's
+          sync store (on Chrome that is Google's servers, encrypted with Google-held keys unless you set a sync
+          passphrase).</span>
+      </div>
+
+      <div class="field">
         <label for="api-port">API Port</label>
         <input type="number" id="api-port" value="12315" min="1" max="65535">
         <span class="field-hint">Default is 12315</span>
