@@ -2,7 +2,8 @@
   "manifest_version": 3,
   "name": "Logseq Quick Capture",
   "version": "1.3.12",
-  "description": "Quick capture from Firefox to Logseq DB",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAmMv7u18orW8qAZ4PWc9BN8npvLCV0X4XTP4tNV0CMGrpoX1aCKgSuCr3Zq3+Mf64SHVdd9jJvDx+A93v+O/y+obDpZp59axRQ8BKeOQFb7nQswWa6s1eK6AcMRk3bnPrp24lm1+IJQR2vcIDxpZWLWh95B896n2x9WvLkWuT0Ndb6wqFM60g64gbKavwsd37UzydZ2xEbFWxNIVJaecMtRPcU5+NfaOryntgKnCLWNh7yVZGXGjL76iGH+HK5uus5p7INfdosWunr0EuEgW+wdY64+qsz9rBYnzZEGrH6Mzt0tuzo8BQ475LV7PnwBFW6YoTIFO9yWecrl1GNI7eWQIDAQAB",
+  "description": "Quick capture from Firefox and Chromium browsers to Logseq DB",
   "browser_specific_settings": {
     "gecko": {
       "id": "logseqexpandedclipper@brerlapn.org",
@@ -20,7 +21,8 @@
     "128": "icons/icon128.png"
   },
   "background": {
-    "scripts": ["background/service-worker.js"]
+    "scripts": ["background/service-worker.js"],
+    "service_worker": "background/service-worker.js"
   },
   "options_ui": {
     "page": "options/options.html",
