@@ -20,6 +20,26 @@ import sys
 MAX_REPLY_BYTES = 900_000
 CLI_TIMEOUT_SECONDS = 60
 
+# The only `logseq` subcommands the extension's CLI transport uses (R17a). A `cli`
+# message whose leading verb(s) are not listed here is refused before anything is
+# spawned; arguments after the verb pair are passed through uninspected. Bump and
+# reinstall the host (native-host/install.sh) whenever the extension gains a verb.
+ALLOWED_SUBCOMMANDS = (
+    ("graph", "list"),
+    ("list", "tag"),
+    ("upsert", "tag"),
+    ("upsert", "block"),
+    ("query",),
+)
+REJECT_MESSAGE = (
+    "logseq subcommand not permitted by this native host: {verb}. The extension is "
+    "newer than the installed host; re-run native-host/install.sh to update it."
+)
+
+
+def is_allowed(args):
+    return any(tuple(args[: len(verb)]) == verb for verb in ALLOWED_SUBCOMMANDS)
+
 
 def find_cli():
     env_path = os.environ.get("LOGSEQ_CLI_PATH")
@@ -91,6 +111,9 @@ def handle(msg, cli):
         args = msg.get("args") or []
         if not isinstance(args, list) or not all(isinstance(a, str) for a in args):
             return {"id": rid, "ok": False, "error": "args must be a list of strings"}
+        if not is_allowed(args):
+            verb = " ".join(args[:2]) or "(empty)"
+            return {"id": rid, "ok": False, "error": REJECT_MESSAGE.format(verb=verb)}
         try:
             return {"id": rid, "ok": True, "result": run_cli(cli, args)}
         except subprocess.TimeoutExpired:
