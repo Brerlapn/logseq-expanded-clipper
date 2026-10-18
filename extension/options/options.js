@@ -1,5 +1,8 @@
 'use strict';
 
+// Chromium exposes only `chrome.*`; see service-worker.js for the rationale.
+globalThis.browser ??= chrome;
+
 window.onerror = (msg, src, line, col, err) => {
   const banner = document.getElementById('lqc-err-banner');
   if (banner) { banner.textContent = `JS Error: ${msg}\n${src}:${line}:${col}`; banner.style.display = 'block'; }

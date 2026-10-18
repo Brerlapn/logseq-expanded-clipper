@@ -1,3 +1,7 @@
+// Chromium exposes only `chrome.*`; Firefox exposes both. In MV3 the chrome
+// APIs return Promises when called without a callback, so one alias is enough.
+globalThis.browser ??= chrome;
+
 // Route keyboard command and toolbar click to the active tab's content script
 browser.commands.onCommand.addListener(async (command) => {
   if (command !== 'open-modal') return;
@@ -233,26 +237,30 @@ browser.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   return true; // keep message channel open for async sendResponse
 });
 
-browser.runtime.onMessage.addListener((message) => {
+// Chromium only honours a Promise returned from onMessage from Chrome 148 on a
+// gradual rollout, so every async reply goes through sendResponse + `return true`.
+browser.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  let reply;
   if (message.type === 'LQC_TRANSPORT_INFO') {
-    return cliReady.then(() => {
+    reply = cliReady.then(() => {
       const t = activeTransport();
       return { name: t.name, capabilities: t.capabilities, reason: cliUnavailableReason };
     });
-  }
-  if (message.type === 'LQC_CLI_DETECT') {
-    return detectCli();
-  }
-  if (message.type === 'LQC_OP') {
-    return cliReady.then(() => handleOp(message))
+  } else if (message.type === 'LQC_CLI_DETECT') {
+    reply = detectCli();
+  } else if (message.type === 'LQC_OP') {
+    reply = cliReady.then(() => handleOp(message))
       .then((result) => ({ ok: true, result }))
       .catch((err) => ({ ok: false, error: err.message }));
-  }
-  if (message.type === 'LQC_SAVE') {
-    return cliReady.then(() => handleSaveOp(message.payload))
+  } else if (message.type === 'LQC_SAVE') {
+    reply = cliReady.then(() => handleSaveOp(message.payload))
       .then(() => ({ ok: true }))
       .catch((err) => ({ ok: false, error: err.message }));
+  } else {
+    return false;
   }
+  reply.then(sendResponse, (err) => sendResponse({ ok: false, error: err.message }));
+  return true;
 });
 
 // The HTTP API reports the open graph by its internal repo name
