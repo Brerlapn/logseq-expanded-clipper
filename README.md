@@ -183,7 +183,7 @@ No build tooling. Package with `npx web-ext build` from `extension/`; lint with
 packaged (and for release, signed) `.xpi`. On Chromium browsers load `extension/` unpacked.
 
 Tests: `node --test tests/*.test.js` (background and settings logic against an in-memory
-`chrome.*`), `python3 -I tests/lqc_host_test.py` (native host), `sh tests/install_sh_test.sh`
+`chrome.*`), `python3 -I tests/lqc_host_test.py` (native host), `bash tests/install_sh_test.sh`
 (installer). The per-browser release checklist is `docs/verification/chromium-release.md`.
 
 ## Acknowledgements

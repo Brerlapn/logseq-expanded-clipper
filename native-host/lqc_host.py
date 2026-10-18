@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Native messaging host bridging Logseq Quick Capture to the logseq CLI.
+"""Native messaging host bridging Logseq Expanded Clipper to the logseq CLI.
 
 Speaks the WebExtensions native messaging protocol on stdio (4-byte little-
 endian length prefix + UTF-8 JSON) and relays requests to the `logseq` CLI.

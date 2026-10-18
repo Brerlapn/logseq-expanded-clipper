@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 # Exercise native-host/install.sh against fake HOMEs. Run: sh tests/install_sh_test.sh
 # Covers R7, R8, R9, R17 (Chromium rows, flatpak rows, byte-identical Firefox output,
 # world-writable refusal, root refusal).
@@ -77,7 +77,8 @@ if git -C "$REPO" show "$OLD_REF:native-host/install.sh" > "$OLD" 2>/dev/null; t
     cp "$H/.mozilla/native-messaging-hosts/lqc-host-wrapper.sh" "$ROOT/old-out/wrapper.sh"
     fresh_home "$H"
     HOME="$H" FLATPAK_INSTALLED="" sh "$NEW" >/dev/null 2>&1 || fail "new installer exited non-zero"
-    check cmp -s "$ROOT/old-out/manifest.json" "$H/.mozilla/native-messaging-hosts/$HOST_NAME.json"
+    # The human-readable "description" was reworded in the Chromium port; every other byte must match.
+    check cmp -s <(grep -v '"description"' "$ROOT/old-out/manifest.json") <(grep -v '"description"' "$H/.mozilla/native-messaging-hosts/$HOST_NAME.json")
     check cmp -s "$ROOT/old-out/wrapper.sh" "$H/.mozilla/native-messaging-hosts/lqc-host-wrapper.sh"
     # Zen output lines unchanged too.
     fresh_home "$H"; O1="$(HOME="$H" FLATPAK_INSTALLED="app.zen_browser.zen" sh "$OLD" 2>&1)"

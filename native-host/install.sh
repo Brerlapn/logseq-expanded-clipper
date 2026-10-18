@@ -1,5 +1,5 @@
 #!/bin/sh
-# Install the Logseq Quick Capture native messaging host.
+# Install the Logseq Expanded Clipper native messaging host (host name stays logseq_quick_capture).
 #
 # Layout (verified against plain Firefox conventions and flatpak Zen Browser):
 #   ~/.local/share/logseq-quick-capture/lqc_host.py   the host (runs on the host system)
@@ -124,7 +124,7 @@ write_wrapper "$WRAPPER"
 cat > "$TMP" <<EOF
 {
   "name": "$HOST_NAME",
-  "description": "Logseq CLI bridge for Logseq Quick Capture",
+  "description": "Logseq CLI bridge for Logseq Expanded Clipper",
   "path": "$WRAPPER",
   "type": "stdio",
   "allowed_extensions": ["$EXT_ID"]
@@ -155,7 +155,7 @@ if [ -n "$CHROMIUM_TARGETS" ]; then
         cat > "$TMP" <<EOF
 {
   "name": "$HOST_NAME",
-  "description": "Logseq CLI bridge for Logseq Quick Capture",
+  "description": "Logseq CLI bridge for Logseq Expanded Clipper",
   "path": "$dir/lqc-host-wrapper.sh",
   "type": "stdio",
   "allowed_origins": ["chrome-extension://$CHROMIUM_EXT_ID/"]

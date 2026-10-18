@@ -1532,7 +1532,7 @@
 
   const HTML = `
     <div id="lqc-overlay">
-      <div id="lqc-modal" role="dialog" aria-modal="true" aria-label="Logseq Quick Capture">
+      <div id="lqc-modal" role="dialog" aria-modal="true" aria-label="Logseq Expanded Clipper">
 
         <div id="lqc-header">
           <button class="lqc-tab lqc-tab-active" data-mode="clipper">Web Clipper</button>

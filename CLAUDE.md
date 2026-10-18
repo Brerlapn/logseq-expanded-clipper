@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-A cross-browser MV3 extension ("Logseq Quick Capture" / "Logseq Expanded Clipper"; Firefox and Chromium) that captures the current
+A cross-browser MV3 extension ("Logseq Expanded Clipper", formerly "Logseq Quick Capture"; Firefox and Chromium) that captures the current
 page (URL, title, selection, tags, notes) into a Logseq DB graph via Logseq's local HTTP API, without
 leaving the browser. It also has a "Tag Properties" mode for filling in structured DB-typed properties
 for a user-defined tag (e.g. building a table-view row for `#music-recs` straight from the browser).
@@ -33,7 +33,7 @@ There is no npm/build tooling. Common operations:
   `return true` (never a returned Promise). Always use the `browser.*` namespace in code. Chromium does not
   expose an optional permission's API (`runtime.connectNative`) to contexts that existed before the grant, so
   enabling the CLI there triggers one `runtime.reload()`; Firefox needs no restart.
-- Tests: `node --test tests/*.test.js`, `python3 -I tests/lqc_host_test.py`, `sh tests/install_sh_test.sh`.
+- Tests: `node --test tests/*.test.js`, `python3 -I tests/lqc_host_test.py`, `bash tests/install_sh_test.sh`.
   Per-browser manual checklist: `docs/verification/chromium-release.md`.
 - The automated tests cover background/settings logic, the native host, and the installer; the modal
   UI and real Logseq round-trips are still verified manually: load the extension, trigger it with
