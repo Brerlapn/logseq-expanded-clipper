@@ -45,3 +45,17 @@ test('unknown message types are left for other listeners', async () => {
   const r = await dispatch({ type: 'SOMETHING_ELSE' });
   assert.equal(r, undefined);
 });
+
+test('granted nativeMessaging without connectNative (Chromium pre-restart) reports a restart, not a crash', async () => {
+  chrome.permissions._granted.add('nativeMessaging');
+  await chrome.storage.local.set({ cliEnabled: true });
+  const saved = chrome.runtime.connectNative; delete chrome.runtime.connectNative;
+  try {
+    const r = await dispatch({ type: 'LQC_CLI_DETECT' });
+    assert.equal(r.available, false);
+    assert.match(r.error, /restart/i);
+    const info = await dispatch({ type: 'LQC_TRANSPORT_INFO' });
+    assert.equal(info.name, 'http');
+    assert.match(info.reason, /restart/);
+  } finally { chrome.runtime.connectNative = saved; await chrome.storage.local.set({ cliEnabled: false }); chrome.permissions._granted.delete('nativeMessaging'); }
+});

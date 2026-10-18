@@ -155,6 +155,9 @@ to baseline behavior.
   manifest. Re-run `native-host/install.sh` (it needs the browser's config directory to exist,
   so launch the browser once first); on flatpak browsers make sure the printed overrides are
   applied and the browser was fully restarted.
+- **Chromium browsers: "Native messaging enabled; restarting the extension once"** — expected the
+  first time you enable the CLI. Chromium only exposes a newly granted permission's API to fresh
+  extension contexts, so the extension reloads itself; reopen settings and press *Test CLI connection*.
 - **"the installed native host is older than the extension"** — the host refused a
   subcommand it doesn't know. Re-run `native-host/install.sh`.
 - **Chrome: "Could not reach Logseq" with the API enabled** — check `chrome://flags` for

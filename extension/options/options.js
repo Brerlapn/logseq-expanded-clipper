@@ -200,6 +200,16 @@ async function toggleCli(enabled) {
     }
   }
   await browser.storage.local.set({ cliEnabled: enabled });
+  if (enabled && typeof browser.runtime.connectNative !== 'function') {
+    // Chromium does not expose an optional permission's API in contexts that
+    // already exist; every extension context must be recreated once. Firefox
+    // injects it immediately, so this branch never runs there.
+    result.textContent = 'Native messaging enabled; restarting the extension once to activate it. Reopen settings and run Test CLI connection.';
+    result.className = 'test-result';
+    result.hidden = false;
+    setTimeout(() => browser.runtime.reload(), 1200);
+    return;
+  }
   if (enabled) {
     await testCli();
   } else {

@@ -252,6 +252,14 @@ function detectCli() {
         cliUnavailableReason = 'CLI integration is not enabled';
         return { available: false, error: 'CLI integration is not enabled.' };
       }
+      if (typeof browser.runtime.connectNative !== 'function') {
+        // Chromium: permission granted in this session, API arrives after the
+        // extension restarts (options.js triggers that restart).
+        cliTransport?.close();
+        cliTransport = null;
+        cliUnavailableReason = 'native messaging was just enabled; the extension must restart once';
+        return { available: false, error: 'Native messaging enabled; restart the extension (reload it) to activate the CLI.' };
+      }
       const t = createCliTransport();
       const version = await t.send('version');
       cliTransport?.close();

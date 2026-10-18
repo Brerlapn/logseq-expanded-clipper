@@ -37,8 +37,9 @@ ZEN_APP="app.zen_browser.zen"
 # Chromium rows: label|config dir tail (under ~/.config)|flatpak app id or "-"
 CHROMIUM_ROWS="Google Chrome|google-chrome|com.google.Chrome
 Chromium|chromium|org.chromium.Chromium
+Ungoogled Chromium|chromium|io.github.ungoogled_software.ungoogled_chromium
 Brave|BraveSoftware/Brave-Browser|-
-Vivaldi|vivaldi|-"
+Vivaldi|vivaldi|com.vivaldi.Vivaldi"
 
 if [ "$(id -u)" -eq 0 ]; then
     echo "install.sh: refusing to run as root; run it as the user whose browser will use the host." >&2
@@ -72,9 +73,12 @@ check_safe_path() {
 # Detect Chromium targets. Emits lines: <NativeMessagingHosts dir>|<label>|<flatpak id or ->
 chromium_targets() {
     printf '%s\n' "$CHROMIUM_ROWS" | while IFS='|' read -r label tail app; do
-        if [ -d "$HOME/.config/$tail" ]; then
-            printf '%s|%s|-\n' "$HOME/.config/$tail/NativeMessagingHosts" "$label"
-        fi
+        case "$label" in
+            "Ungoogled Chromium") ;; # native form shares ~/.config/chromium with the Chromium row
+            *) if [ -d "$HOME/.config/$tail" ]; then
+                   printf '%s|%s|-\n' "$HOME/.config/$tail/NativeMessagingHosts" "$label"
+               fi ;;
+        esac
         if [ "$app" != "-" ] && flatpak info "$app" >/dev/null 2>&1; then
             printf '%s|%s|%s\n' "$HOME/.var/app/$app/config/$tail/NativeMessagingHosts" "$label (flatpak)" "$app"
         fi

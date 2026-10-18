@@ -30,7 +30,9 @@ There is no npm/build tooling. Common operations:
 - Chromium browsers (Chrome, Chromium, Brave, Vivaldi): load `extension/` unpacked from
   `chrome://extensions`. The manifest carries both background keys and a pinned `key`; every script
   starts with `globalThis.browser ??= chrome`, and async `onMessage` replies must use `sendResponse` +
-  `return true` (never a returned Promise). Always use the `browser.*` namespace in code.
+  `return true` (never a returned Promise). Always use the `browser.*` namespace in code. Chromium does not
+  expose an optional permission's API (`runtime.connectNative`) to contexts that existed before the grant, so
+  enabling the CLI there triggers one `runtime.reload()`; Firefox needs no restart.
 - Tests: `node --test tests/*.test.js`, `python3 -I tests/lqc_host_test.py`, `sh tests/install_sh_test.sh`.
   Per-browser manual checklist: `docs/verification/chromium-release.md`.
 - The automated tests cover background/settings logic, the native host, and the installer; the modal
