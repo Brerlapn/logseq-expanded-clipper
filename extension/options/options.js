@@ -26,7 +26,14 @@ let editingIndex = -1; // -1 = new, ≥0 = editing existing
 
 async function readToken() {
   const { logseqApiToken, tokenSynced } = await browser.storage.local.get({ logseqApiToken: '', tokenSynced: false });
-  if (tokenSynced) return (await browser.storage.sync.get({ logseqApiToken: '' })).logseqApiToken;
+  if (tokenSynced) {
+    const synced = (await browser.storage.sync.get({ logseqApiToken: '' })).logseqApiToken;
+    if (synced) return synced;
+    // Another profile turned syncing off and withdrew the shared token: this
+    // profile is no longer synced and must be given a token again.
+    await browser.storage.local.set({ tokenSynced: false });
+    return logseqApiToken;
+  }
   if (logseqApiToken) return logseqApiToken;
   const synced = (await browser.storage.sync.get({ logseqApiToken: '' })).logseqApiToken;
   if (synced) await browser.storage.local.set({ tokenSynced: true }); // pre-toggle install: keep it where it is
@@ -138,7 +145,7 @@ async function saveSettings() {
       if (g) g.capturePage = input.value.trim();
     });
 
-    await writeToken(document.getElementById('api-token').value.trim());
+    await serializeTokenOp(() => writeToken(document.getElementById('api-token').value.trim()));
     await browser.storage.sync.set({
       logseqApiPort: parseInt(document.getElementById('api-port').value, 10) || 12315,
       graphSettings,
@@ -150,15 +157,33 @@ async function saveSettings() {
   }
 }
 
+// Token moves are multi-step; run them one at a time and keep the checkbox
+// inert while one is in flight so a double click or a concurrent Save cannot
+// interleave with the move.
+let tokenOp = Promise.resolve();
+function serializeTokenOp(fn) {
+  const next = tokenOp.then(fn, fn);
+  tokenOp = next.catch(() => {});
+  return next;
+}
+
 async function toggleTokenSynced(on) {
   const status = document.getElementById('save-status');
+  const box = document.getElementById('token-synced');
+  box.disabled = true;
   try {
-    await writeToken(document.getElementById('api-token').value.trim()); // keep an unsaved edit
-    await setTokenSynced(on);
-    showStatus(status, on ? 'Token moved to your browser sync store.' : 'Token now stored on this device only.', 'ok');
+    await serializeTokenOp(async () => {
+      await writeToken(document.getElementById('api-token').value.trim()); // keep an unsaved edit
+      await setTokenSynced(on);
+    });
+    showStatus(status, on
+      ? 'Token moved to your browser sync store.'
+      : 'Token now stored on this device only (removed from the sync store for every profile).', 'ok');
   } catch (err) {
-    document.getElementById('token-synced').checked = !on;
+    box.checked = !on;
     showStatus(status, `Error: ${err.message}`, 'err');
+  } finally {
+    box.disabled = false;
   }
 }
 

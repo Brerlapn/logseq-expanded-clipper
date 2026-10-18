@@ -81,3 +81,38 @@ test('second profile with sync on and toggle off sees no token', async () => {
   assert.equal(await readToken(), '');
   assert.equal(chrome.storage.sync._data.has('logseqApiToken'), false);
 });
+
+test('the duplicated settings helpers are byte-identical in both scripts (drift guard)', () => {
+  const read = (rel) => fs.readFileSync(path.join(__dirname, '..', 'extension', rel), 'utf8');
+  const extract = (src, name) => {
+    const start = src.indexOf(`async function ${name}(`);
+    assert.notEqual(start, -1, `${name} missing`);
+    const end = src.indexOf('\n}\n', start);
+    return src.slice(start, end + 3);
+  };
+  for (const name of ['readToken', 'readCliEnabled']) {
+    assert.equal(extract(read('background/service-worker.js'), name), extract(read('options/options.js'), name), `${name} drifted`);
+  }
+});
+
+test('profile B adopts a token profile A synced; A opting out leaves B unsynced, not broken', async () => {
+  reset();
+  chrome.storage.sync._data.set('logseqApiToken', 'from-A'); // A turned the toggle on
+  assert.equal(await readToken(), 'from-A');                  // B adopts it
+  assert.equal(chrome.storage.local._data.get('tokenSynced'), true);
+  chrome.storage.sync._data.delete('logseqApiToken');         // A turned the toggle off
+  assert.equal(await readToken(), '');                        // B has no token now...
+  assert.equal(chrome.storage.local._data.get('tokenSynced'), false); // ...and shows as unsynced
+  await writeToken('typed-on-B');
+  assert.equal(chrome.storage.local._data.get('logseqApiToken'), 'typed-on-B');
+  assert.equal(chrome.storage.sync._data.has('logseqApiToken'), false);
+});
+
+test('LQC_SAVE replies through sendResponse with the HTTP failure text', async () => {
+  reset();
+  await writeToken('tok');
+  globalThis.fetch = async () => { throw new Error('offline'); };
+  const r = await dispatch({ type: 'LQC_SAVE', payload: { mode: 'clipper', url: 'https://x', title: 'X', tags: [], notes: '', highlight: '' } });
+  assert.equal(r.ok, false);
+  assert.match(r.error, /Could not reach Logseq|No API token/);
+});

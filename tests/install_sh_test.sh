@@ -62,8 +62,12 @@ check sh -c "printf '%s\n' \"\$1\" | grep -q 'Brave detected'" _ "$OUT"
 check sh -c "printf '%s\n' \"\$1\" | grep -q 'Chromium (flatpak) detected'" _ "$OUT"
 
 # ---- 2. Firefox output byte-identical to the pre-change script ----------------------
+# Baseline = the last installer before the Chromium port (merge-base with master at the
+# time, d798b38). Override with LQC_OLD_INSTALL_REF. Never HEAD: that is the script under test.
 OLD="$ROOT/install.sh.old"
-if git -C "$REPO" show HEAD:native-host/install.sh > "$OLD" 2>/dev/null; then
+OLD_REF="${LQC_OLD_INSTALL_REF:-d798b38}"
+if git -C "$REPO" show "$OLD_REF:native-host/install.sh" > "$OLD" 2>/dev/null; then
+    if grep -q CHROMIUM_EXT_ID "$OLD"; then fail "baseline $OLD_REF already contains the Chromium port; pick an older LQC_OLD_INSTALL_REF"; fi
     cp "$REPO/native-host/lqc_host.py" "$ROOT/lqc_host.py"   # old script reads a sibling host
     H="$ROOT/home-ff"
     fresh_home "$H"
@@ -80,7 +84,7 @@ if git -C "$REPO" show HEAD:native-host/install.sh > "$OLD" 2>/dev/null; then
     fresh_home "$H"; O2="$(HOME="$H" FLATPAK_INSTALLED="app.zen_browser.zen" sh "$NEW" 2>&1)"
     check test "$O1" = "$O2"
 else
-    echo "skip: git show HEAD:native-host/install.sh unavailable; byte-identity not checked"
+    echo "skip: git show $OLD_REF:native-host/install.sh unavailable; byte-identity not checked"
 fi
 
 # ---- 3. No Chromium browser: nothing Chromium-related, exit 0 ----------------------

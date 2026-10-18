@@ -43,7 +43,14 @@ browser.runtime.onMessage.addListener((message) => {
 
 async function readToken() {
   const { logseqApiToken, tokenSynced } = await browser.storage.local.get({ logseqApiToken: '', tokenSynced: false });
-  if (tokenSynced) return (await browser.storage.sync.get({ logseqApiToken: '' })).logseqApiToken;
+  if (tokenSynced) {
+    const synced = (await browser.storage.sync.get({ logseqApiToken: '' })).logseqApiToken;
+    if (synced) return synced;
+    // Another profile turned syncing off and withdrew the shared token: this
+    // profile is no longer synced and must be given a token again.
+    await browser.storage.local.set({ tokenSynced: false });
+    return logseqApiToken;
+  }
   if (logseqApiToken) return logseqApiToken;
   const synced = (await browser.storage.sync.get({ logseqApiToken: '' })).logseqApiToken;
   if (synced) await browser.storage.local.set({ tokenSynced: true }); // pre-toggle install: keep it where it is
@@ -134,21 +141,32 @@ function createCliTransport() {
   function send(cmd, args) {
     return new Promise((resolve, reject) => {
       const id = nextId++;
-      pending.set(id, { resolve, reject });
-      try {
-        ensurePort().postMessage({ id, cmd, args });
-      } catch (err) {
-        pending.delete(id);
-        reject(err);
-        return;
-      }
-      setTimeout(() => {
+      const timer = setTimeout(() => {
         if (pending.has(id)) {
           pending.delete(id);
           reject(new Error('Native host timed out'));
         }
       }, 90000);
+      const settle = (fn) => (v) => { clearTimeout(timer); fn(v); };
+      pending.set(id, { resolve: settle(resolve), reject: settle(reject) });
+      try {
+        ensurePort().postMessage({ id, cmd, args });
+      } catch (err) {
+        pending.delete(id);
+        clearTimeout(timer);
+        reject(err);
+      }
     });
+  }
+
+  // Drop the port (and fail anything pending) when this transport is replaced.
+  function close() {
+    const p = port;
+    port = null;
+    try { p?.disconnect?.(); } catch { /* already gone */ }
+    const err = new Error('Native host transport replaced');
+    pending.forEach(({ reject }) => reject(err));
+    pending.clear();
   }
 
   // The CLI does not reject an unknown --graph: even a read silently creates
@@ -210,31 +228,46 @@ function createCliTransport() {
     capabilities: { routeWrites: true, listGraphs: true, readSchemas: true },
     send,
     cliJson,
+    close,
   };
 }
 
 let cliTransport = null;
 let cliUnavailableReason = ''; // why the CLI transport is not active, for the modal
 
-async function detectCli() {
-  try {
-    const granted = await browser.permissions.contains({ permissions: ['nativeMessaging'] });
-    const cliEnabled = await readCliEnabled();
-    if (!granted || !cliEnabled) {
+// Single-flight: a detection started while another is running (e.g. the
+// cliEnabled migration write fires storage.onChanged mid-detect) reuses the
+// in-flight promise instead of opening a second native port. Replacing the
+// transport always closes the previous port.
+let detecting = null;
+function detectCli() {
+  if (detecting) return detecting;
+  detecting = (async () => {
+    try {
+      const granted = await browser.permissions.contains({ permissions: ['nativeMessaging'] });
+      const cliEnabled = await readCliEnabled();
+      if (!granted || !cliEnabled) {
+        cliTransport?.close();
+        cliTransport = null;
+        cliUnavailableReason = 'CLI integration is not enabled';
+        return { available: false, error: 'CLI integration is not enabled.' };
+      }
+      const t = createCliTransport();
+      const version = await t.send('version');
+      cliTransport?.close();
+      cliTransport = t;
+      cliUnavailableReason = '';
+      return { available: true, version };
+    } catch (err) {
+      cliTransport?.close();
       cliTransport = null;
-      cliUnavailableReason = 'CLI integration is not enabled';
-      return { available: false, error: 'CLI integration is not enabled.' };
+      cliUnavailableReason = `the Logseq CLI could not be reached (${err.message})`;
+      return { available: false, error: err.message };
+    } finally {
+      detecting = null;
     }
-    const t = createCliTransport();
-    const version = await t.send('version');
-    cliTransport = t;
-    cliUnavailableReason = '';
-    return { available: true, version };
-  } catch (err) {
-    cliTransport = null;
-    cliUnavailableReason = `the Logseq CLI could not be reached (${err.message})`;
-    return { available: false, error: err.message };
-  }
+  })();
+  return detecting;
 }
 
 // Event-page wake race: the message that woke this page must not be answered

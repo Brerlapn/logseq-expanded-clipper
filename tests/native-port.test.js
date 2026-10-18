@@ -22,6 +22,7 @@ chrome.runtime.connectNative = () => {
     }
     reply(JSON.stringify({ status: 'ok', data: {} }));
   };
+  port.disconnect = () => { port.disconnected = true; port.dead = true; };
   port.kill = () => { port.dead = true; port.error = { message: 'host exited' }; port.onDisconnect._l.forEach((f) => f(port)); };
   ports.push(port);
   return port;
@@ -56,4 +57,24 @@ test('a request in flight when the host dies fails clearly; the next one reconne
   const r = await dispatch({ type: 'LQC_OP', op: 'listGraphs' });
   assert.equal(r.ok, true, r.error);
   assert.equal(ports.length, 2, 'a new port was opened for the next request');
+});
+
+test('toggling cliEnabled in storage.local re-runs detection (off then on), not storage.sync', async () => {
+  await chrome.storage.local.set({ cliEnabled: false });
+  let info = await dispatch({ type: 'LQC_TRANSPORT_INFO' });
+  assert.equal(info.name, 'http');
+  await chrome.storage.sync.set({ cliEnabled: true }); // wrong area: ignored
+  info = await dispatch({ type: 'LQC_TRANSPORT_INFO' });
+  assert.equal(info.name, 'http');
+  await chrome.storage.local.set({ cliEnabled: true });
+  info = await dispatch({ type: 'LQC_TRANSPORT_INFO' });
+  assert.equal(info.name, 'cli');
+});
+
+test('replacing the transport closes the previous port; concurrent detection opens one port', async () => {
+  const before = ports.length;
+  const prev = ports.at(-1);
+  await Promise.all([dispatch({ type: 'LQC_CLI_DETECT' }), dispatch({ type: 'LQC_CLI_DETECT' })]);
+  assert.equal(ports.length, before + 1, 'two overlapping detections share one new port');
+  assert.ok(prev.disconnected, 'the replaced port was disconnected');
 });
