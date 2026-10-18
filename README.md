@@ -28,7 +28,8 @@ nothing is lost.
 ### Requirements
 
 - Firefox 121+ (or a Firefox-based browser — tested on Zen Browser), **or** a Chromium
-  browser (Chrome, Chromium, Brave, Vivaldi)
+  browser (Chrome, Chromium, Brave, Vivaldi; 1.4.0 was verified on Chrome, Chromium and
+  Vivaldi — Brave is expected to work but has not been run)
 - Logseq with a DB graph
 
 **Firefox:** the extension ships as a signed `.xpi`: install via `about:addons` → gear menu →
