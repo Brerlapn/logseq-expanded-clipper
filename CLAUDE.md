@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-A Firefox MV3 extension ("Logseq Quick Capture" / "Logseq Expanded Clipper") that captures the current
+A cross-browser MV3 extension ("Logseq Quick Capture" / "Logseq Expanded Clipper"; Firefox and Chromium) that captures the current
 page (URL, title, selection, tags, notes) into a Logseq DB graph via Logseq's local HTTP API, without
 leaving the browser. It also has a "Tag Properties" mode for filling in structured DB-typed properties
 for a user-defined tag (e.g. building a table-view row for `#music-recs` straight from the browser).
@@ -27,7 +27,14 @@ There is no npm/build tooling. Common operations:
   required, e.g. avoiding `type: module` backgrounds and on-demand content-script injection).
 - Package/sign as `.xpi`: `npx web-ext build` / `npx web-ext sign` from the `extension/` directory
   (`web-ext` is invoked via `npx`, not installed as a project dependency).
-- No automated test suite exists. Verification is manual: load the extension, trigger it with
+- Chromium browsers (Chrome, Chromium, Brave, Vivaldi): load `extension/` unpacked from
+  `chrome://extensions`. The manifest carries both background keys and a pinned `key`; every script
+  starts with `globalThis.browser ??= chrome`, and async `onMessage` replies must use `sendResponse` +
+  `return true` (never a returned Promise). Always use the `browser.*` namespace in code.
+- Tests: `node --test tests/*.test.js`, `python3 -I tests/lqc_host_test.py`, `sh tests/install_sh_test.sh`.
+  Per-browser manual checklist: `docs/verification/chromium-release.md`.
+- The automated tests cover background/settings logic, the native host, and the installer; the modal
+  UI and real Logseq round-trips are still verified manually: load the extension, trigger it with
   `Alt+Shift+L` or the toolbar button, and exercise the modal against a real running Logseq instance
   with the HTTP API enabled (Settings → Developer → HTTP API server, with a Bearer token).
 
@@ -53,12 +60,16 @@ Three extension surfaces, no framework:
   static per-tag field config editor for Tag Properties mode).
 
 Storage split:
-- `browser.storage.sync` — user settings: `logseqApiToken`, `logseqApiPort`, `cliEnabled`,
-  `graphSettings` (Known Graphs, each with its capture page), `webClipperTargetGraph` (the Target
-  Graph shared by both modes), `tagConfigs` (pinned tags and their field schema, see below).
-- `browser.storage.local` — `lqcPending`, the in-flight modal form state, written on every change and
-  cleared on successful save (the safety net described in "Save Failure Behavior" below); plus caches:
-  `tagCache`, `tagSuggestions`, `recentTagConfigs`.
+- `browser.storage.sync` — user settings: `logseqApiPort`, `graphSettings` (Known Graphs, each with
+  its capture page), `webClipperTargetGraph` (the Target Graph shared by both modes), `tagConfigs`
+  (pinned tags and their field schema, see below); plus `logseqApiToken` only when the user ticks the
+  sync toggle.
+- `browser.storage.local` — `logseqApiToken` (default home) and `tokenSynced` (the toggle), `cliEnabled`
+  (per profile, like the nativeMessaging grant); `lqcPending`, the in-flight modal form state, written on
+  every change and cleared on successful save (the safety net described in "Save Failure Behavior"
+  below); plus caches: `tagCache`, `tagSuggestions`, `recentTagConfigs`. Read the token and CLI switch
+  through `readToken()` / `readCliEnabled()` (duplicated in service-worker.js and options.js), never
+  with a direct `storage.sync.get`.
 
 ### Key domain concepts (full glossary in `CONTEXT.md`)
 

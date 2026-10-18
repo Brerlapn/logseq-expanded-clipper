@@ -53,3 +53,21 @@ The extension detects host availability at runtime and degrades gracefully to ba
   must be built, documented, and distributed alongside the extension for those who want it.
 - The CLI is young and evolving (spike ran against revision 302f798); CLI-transport features
   should fail soft back to baseline behavior when the CLI misbehaves.
+
+### Chromium (added 2026-10-18, plan `docs/plans/2026-10-18-001-feat-chromium-port-plan.md`)
+- The same `extension/` directory loads in Firefox and Chromium: both `background.scripts` and
+  `background.service_worker` are declared, a one-line shim aliases `browser` to `chrome`, and
+  every async `onMessage` reply goes through `sendResponse` because Chromium honours Promise
+  returns only from Chrome 148 on a gradual rollout. A pinned manifest `key` fixes the Chromium
+  extension ID so the host manifest can allow it.
+- Chromium host manifests use `allowed_origins: ["chrome-extension://<id>/"]` and live per
+  browser: `~/.config/google-chrome`, `~/.config/chromium`, `~/.config/BraveSoftware/Brave-Browser`,
+  `~/.config/vivaldi` (each `/NativeMessagingHosts`), and `~/.var/app/<app-id>/config/...` for
+  flatpak Chrome and Chromium. Each browser gets its own wrapper copy beside its manifest so a
+  flatpak browser needs only the `--talk-name` override, not a filesystem grant.
+- The Chromium service worker is ephemeral. All CLI state is rebuilt by `detectCli()` on boot
+  and the native port is reopened lazily on the next request; an open port keeps the worker
+  alive, so no keepalive loop is used.
+- The API token and the CLI switch are stored in `storage.local` by default (on Chrome,
+  `storage.sync` travels through the user's Google account); a per-profile toggle opts the
+  token into sync. The host accepts only the `logseq` subcommands the transport uses.
