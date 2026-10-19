@@ -27,13 +27,17 @@ There is no npm/build tooling. Common operations:
   required, e.g. avoiding `type: module` backgrounds and on-demand content-script injection).
 - Package/sign as `.xpi`: `npx web-ext build` / `npx web-ext sign` from the `extension/` directory
   (`web-ext` is invoked via `npx`, not installed as a project dependency).
+- Chrome Web Store zip: `sh scripts/package-chromium.sh` (strips the manifest `key`, which the store
+  rejects; the development manifest keeps it so unpacked installs share one ID). Never upload a raw
+  zip of `extension/`.
 - Chromium browsers (Chrome, Chromium, Brave, Vivaldi): load `extension/` unpacked from
   `chrome://extensions`. The manifest carries both background keys and a pinned `key`; every script
   starts with `globalThis.browser ??= chrome`, and async `onMessage` replies must use `sendResponse` +
   `return true` (never a returned Promise). Always use the `browser.*` namespace in code. Chromium does not
   expose an optional permission's API (`runtime.connectNative`) to contexts that existed before the grant, so
   enabling the CLI there triggers one `runtime.reload()`; Firefox needs no restart.
-- Tests: `node --test tests/*.test.js`, `python3 -I tests/lqc_host_test.py`, `bash tests/install_sh_test.sh`.
+- Tests: `node --test tests/*.test.js`, `python3 -I tests/lqc_host_test.py`, `bash tests/install_sh_test.sh`,
+  `bash tests/package_chromium_test.sh`.
   Per-browser manual checklist: `docs/verification/chromium-release.md`.
 - The automated tests cover background/settings logic, the native host, and the installer; the modal
   UI and real Logseq round-trips are still verified manually: load the extension, trigger it with
