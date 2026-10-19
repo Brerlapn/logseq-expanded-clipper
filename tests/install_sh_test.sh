@@ -8,7 +8,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/.." && pwd)"
 NEW="$REPO/native-host/install.sh"
 HOST_NAME="logseq_quick_capture"
-CHROMIUM_EXT_ID="ojfmjhjcjgogodbfmnoepkdlacdmkbpn"
+CHROMIUM_EXT_ID="aambbkcokmgbfhfnipfbbghaihmcgdgo"
 ROOT="$(mktemp -d)"
 trap 'rm -rf "$ROOT"' EXIT INT TERM
 FAILS=0

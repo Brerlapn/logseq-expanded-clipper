@@ -16,7 +16,7 @@ const LABEL = args.label || 'browser';
 const TOKEN = args.token;
 const GRAPH = args.graph || 'DBtestsync';
 const STEPS = args.steps ? String(args.steps).split(',').map(Number) : null;
-const PINNED_ID = 'ojfmjhjcjgogodbfmnoepkdlacdmkbpn';
+const PINNED_ID = 'aambbkcokmgbfhfnipfbbghaihmcgdgo';
 const want = (n) => !STEPS || STEPS.includes(n);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const results = [];

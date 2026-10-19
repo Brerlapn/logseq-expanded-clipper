@@ -27,7 +27,7 @@ set -eu
 
 HOST_NAME="logseq_quick_capture"
 EXT_ID="logseqexpandedclipper@brerlapn.org"
-CHROMIUM_EXT_ID="ojfmjhjcjgogodbfmnoepkdlacdmkbpn"
+CHROMIUM_EXT_ID="aambbkcokmgbfhfnipfbbghaihmcgdgo"
 SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
 INSTALL_DIR="$HOME/.local/share/logseq-quick-capture"
 HOST_PATH="$INSTALL_DIR/lqc_host.py"

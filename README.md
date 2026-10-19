@@ -37,7 +37,8 @@ nothing is lost.
 
 **Chromium browsers:** load the `extension/` directory unpacked: `chrome://extensions` →
 enable *Developer mode* → *Load unpacked* → pick `extension/`. The manifest pins the extension
-ID to `ojfmjhjcjgogodbfmnoepkdlacdmkbpn` on every machine, which is what the native host
+ID to `aambbkcokmgbfhfnipfbbghaihmcgdgo`, the Chrome Web Store's ID for this extension, so unpacked and store
+installs share it; that is what the native host
 (Tier 2) allows. A Chrome Web Store listing is planned; until then unpacked is the install.
 Chrome logs two warnings about Firefox-only manifest keys; they are harmless.
 
