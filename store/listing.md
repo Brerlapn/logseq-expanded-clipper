@@ -75,13 +75,9 @@ Visibility: **Unlisted** for the first submission (plan R11). Free. All regions.
 
 ## Test instructions tab
 
-> This extension only works alongside the Logseq desktop app (https://logseq.com, the DB-graph version) with its HTTP API server turned on. Everything it sends goes to http://localhost:<port> on the tester's own machine; it makes no other network requests.
->
-> To test with Logseq: open Logseq with a DB graph, go to Settings → Developer, enable "HTTP API server", and copy the token. In the extension's options page paste the token and press "Test connection" (it should report OK). On any web page press Alt+Shift+L or click the toolbar icon: the capture modal opens. Add a tag and a note and press Save. The clip appears in today's journal in Logseq.
->
-> To test without Logseq: the modal still opens on Alt+Shift+L and the options page still loads. Pressing Save shows a visible error with a Retry button and the form keeps its content. There is no silent behaviour.
->
-> The nativeMessaging permission is optional and off by default. Enabling it requires a separate installer from the source repository and is not needed to review the extension.
+No credentials. "Additional instructions" is capped at 500 characters; this is 474:
+
+> Needs the Logseq desktop app (DB graph) with Settings > Developer > HTTP API server on. All traffic goes to http://localhost only. With Logseq: paste its token in the extension options, click Test connection, then on any page press Alt+Shift+L, add a tag and note, Save; the clip appears in today's journal. Without Logseq: the modal still opens, Save shows a visible error with Retry, nothing silent. nativeMessaging is optional, off by default, needs a separate installer.
 
 ## Screenshots to take (1280x800)
 
