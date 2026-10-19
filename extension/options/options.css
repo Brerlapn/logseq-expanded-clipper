@@ -53,6 +53,27 @@ section h2 {
   line-height: 1.5;
 }
 
+.data-notice {
+  font-size: 13px;
+  color: #374151;
+  line-height: 1.5;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-left: 3px solid #3b82f6;
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin: 4px 0 8px;
+}
+.data-notice code {
+  background: #f3f4f6;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+.data-notice a {
+  color: #2563eb;
+}
+
 /* ── Fields ── */
 .field {
   display: flex;

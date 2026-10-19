@@ -4,6 +4,7 @@
 - **Manifest version**: V3 (clean rebuild, not a fork of the existing MV2 extension)
 - **Logseq integration**: HTTP API at `localhost:12315`, Bearer token auth — not x-callback-url
 - **UI mechanism**: Content script modal injected into the page, not a popup
+- **Data-handling changes are disclosed**: any change to what the extension collects, stores, or sends (a new permission, a new destination, a change to where the token lives) bumps the version, adds a dated entry to the changelog in `docs/PRIVACY.md`, updates the data-notice block in `options.html`, and shows a one-time notice in Settings on first open after the update. Chrome Web Store policy since 2026-08-01 requires the in-product disclosure; the one-time notice mechanism is built the first time a change needs it.
 - **Keyboard shortcut**: `Alt+Shift+L` (user-overridable in Firefox `about:addons` or Chromium `chrome://extensions/shortcuts`)
 - **Default capture target**: TODAY's journal page, with a per-graph override (each Known Graph may set its own capture page; graphs without one use the journal)
 - **Readwise sync**: Out of scope for v1

@@ -41,6 +41,13 @@ ID to `ojfmjhjcjgogodbfmnoepkdlacdmkbpn` on every machine, which is what the nat
 (Tier 2) allows. A Chrome Web Store listing is planned; until then unpacked is the install.
 Chrome logs two warnings about Firefox-only manifest keys; they are harmless.
 
+**Source and privacy:** the public source lives at
+https://github.com/Brerlapn/logseq-expanded-clipper, and that is also where the CLI tier's
+installer and `docs/HOW-TO-USE.md` come from, since browser stores cannot ship them. What the
+extension does with your data is in [`docs/PRIVACY.md`](docs/PRIVACY.md): captures go only to
+your Logseq on `localhost`, the token stays on-device unless you opt into sync, nothing reaches
+the developer.
+
 ### Tier 1 — HTTP API (baseline)
 
 Works with just the Logseq app. Captures go to whichever graph is open in Logseq.

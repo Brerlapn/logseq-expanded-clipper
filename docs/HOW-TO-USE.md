@@ -2,14 +2,14 @@
 
 Capture the page you're reading into a Logseq DB graph without leaving the browser:
 URL, title, tags, notes, highlighted text, or a full row of tag properties.
-Version 1.4.0. Linux. Firefox 121+ (or Zen Browser), or a Chromium browser (Chrome, Chromium,
+Version 1.4.1. Linux. Firefox 121+ (or Zen Browser), or a Chromium browser (Chrome, Chromium,
 Brave, Vivaldi). DB graphs only.
 
 ## What's in this zip
 
 | File | What it is |
 |---|---|
-| `logseq-expanded-clipper-1.4.0.xpi` | The signed extension, for Firefox and Zen |
+| `logseq-expanded-clipper-1.4.1.xpi` | The signed extension, for Firefox and Zen |
 | `chromium/` | The same extension as a folder, for Chromium browsers (load unpacked) |
 | `native-host/install.sh` | Installs the CLI bridge (Tier 2) |
 | `native-host/lqc_host.py` | The CLI bridge itself |
