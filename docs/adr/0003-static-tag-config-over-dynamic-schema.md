@@ -1,9 +1,19 @@
 # ADR 0003: Static Tag Config over Dynamic Schema Reading
 
 ## Status
-Accepted — superseded in part by ADR 0004 (dynamic schema reading is validated and available
-via the CLI transport when the native messaging host is installed; static config remains the
-baseline mechanism and fallback)
+Superseded in part by ADR 0004. The Context and Decision below are the 2026 project-start
+record and are kept as written; the block that follows says what the extension does today.
+
+## Current state (2026-10-19)
+- **With the CLI transport** (native messaging host installed, ADR 0004), Tag Properties mode
+  reads a tag's schema live from the graph: `getTagSchema` in the service worker returns the
+  properties keyed by `db/ident`, inherited ones included, and any tag in the Target Graph can
+  be picked. No manual field setup.
+- **Static Tag Config survives in two roles only:** the fallback when the CLI is not installed,
+  because the HTTP transport still cannot read schemas; and the source of the pinned tags shown
+  first in the tag picker.
+- **`getTag()` over the HTTP API is still never called.** The doubt recorded below was never
+  resolved; the project went around it through the CLI instead.
 
 ## Context
 Tag Properties mode needs to know which fields to show for a given tag (e.g., `#music-recs` → artist, album, recommended-by, rating, genre). The ideal implementation would read this schema dynamically from the Logseq DB via `logseq.Editor.getTag()`. However, research into the Logseq DB HTTP API revealed that while `getTag()` exists, it is unconfirmed whether it returns full property schema definitions (field names + types) in a form the extension can consume. The Logseq DB HTTP API was still evolving as of the project start.
