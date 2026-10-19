@@ -3,7 +3,7 @@
   "name": "Logseq Expanded Clipper",
   "version": "1.4.1",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAyJ6EWeA0L8JGn+ZNKODr8UKJ8sGd2p8Wuiz2goFtuAbFeXGMxf2Mq4mJ4BllmSOGdRyXS/7ufQB45g5N2tOCbHbmsh0KcaImycG1uZBpQaBUbqX/KvD1KA4O0790VGVISPUMNkeIBubwjNDXfbL0rIF5i0H/5bAQqV4KSwZEtwveJhZ4x4ZbXO4NBSwTv260GBmYp9IVs7TE8VwR/CM4i4DKlpGKdFS18nVGV4yBfdBi5978xkaKfB8d4zalJ83KBpnvz/WkgX/tp05pEAlgLetJjc1QU3H3oGl17yXt3rB6gKrKIEY2q8P1JT1ZC66aTUogPWHX8acT0/lXh8SJGwIDAQAB",
-  "description": "Quick capture from Firefox and Chromium browsers to Logseq DB",
+  "description": "Capture the page you're reading into your Logseq DB graph: URL, title, tags, notes, highlight.",
   "browser_specific_settings": {
     "gecko": {
       "id": "logseqexpandedclipper@brerlapn.org",

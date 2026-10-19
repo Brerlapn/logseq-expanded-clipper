@@ -9,7 +9,7 @@ PNGs named `screenshot-1-modal.png`, `screenshot-2-tag-properties.png`, `screens
 
 **Title:** Logseq Expanded Clipper
 
-**Short description** (under 132 characters, 94 used):
+**Short description** (under 132 characters, 94 used; the store takes this from the manifest `description` field, so edit it there and rebuild the zip):
 
 > Capture the page you're reading into your Logseq DB graph: URL, title, tags, notes, highlight.
 
