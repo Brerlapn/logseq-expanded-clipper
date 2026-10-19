@@ -1,6 +1,6 @@
 # Logseq Expanded Clipper
 
-A Firefox extension for capturing web content into [Logseq DB](https://github.com/logseq/logseq)
+A browser extension for Firefox and Chromium browsers (Chrome, Chromium, Brave, Vivaldi) that captures web content into [Logseq DB](https://github.com/logseq/logseq)
 graphs without leaving the browser. Press a shortcut, annotate, save — the clip lands as a
 block in your graph with native DB tags and typed properties.
 
@@ -18,8 +18,8 @@ properties). It does not use, and will never write, file-graph `property:: value
   existing values). If the tag has a url-typed property, the clip URL is pre-filled into it
   and the block text becomes the clean page title.
 
-Open the modal with **Alt+Shift+L** (rebindable in `about:addons` → gear → Manage Extension
-Shortcuts) or the toolbar button. Escape closes it; unsaved work is kept as a draft and
+Open the modal with **Alt+Shift+L** (rebindable in Firefox at `about:addons` → gear → Manage Extension
+Shortcuts, in Chromium at `chrome://extensions/shortcuts`) or the toolbar button. Escape closes it; unsaved work is kept as a draft and
 offered for restore next time. If a save fails, the modal stays open with a Retry button —
 nothing is lost.
 

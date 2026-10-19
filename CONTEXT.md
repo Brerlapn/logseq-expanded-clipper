@@ -1,10 +1,10 @@
-# Logseq Quick Capture Extension — Glossary
+# Logseq Expanded Clipper — Glossary
 
 ## Extension-wide Decisions (not glossary terms, recorded here for context)
 - **Manifest version**: V3 (clean rebuild, not a fork of the existing MV2 extension)
 - **Logseq integration**: HTTP API at `localhost:12315`, Bearer token auth — not x-callback-url
 - **UI mechanism**: Content script modal injected into the page, not a popup
-- **Keyboard shortcut**: `Alt+Shift+L` (user-overridable in `about:addons`)
+- **Keyboard shortcut**: `Alt+Shift+L` (user-overridable in Firefox `about:addons` or Chromium `chrome://extensions/shortcuts`)
 - **Default capture target**: TODAY's journal page, with a per-graph override (each Known Graph may set its own capture page; graphs without one use the journal)
 - **Readwise sync**: Out of scope for v1
 - **Tag schema reading**: Static config is the baseline; live schema reading from a graph is available via the CLI transport (ADR 0004)

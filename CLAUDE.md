@@ -104,11 +104,11 @@ The four ADRs in `docs/adr/` are load-bearing — re-read the relevant one befor
 - Transport (`0004`: HTTP API as the baseline, the Logseq CLI via a native messaging host as an
   optional upgrade that routes to any graph, lists graphs, and reads tag schemas)
 
-`specification.md` is the original feature spec. `specification-updates.md` records later requests
+`specification.md` (private; kept out of the public GitHub mirror along with `specification-updates.md`, `implementation-plan.md`, `references.md`, `errors.md` and the `.claude/`, `.codex/`, `.agents/`, `.beads/` tooling) is the original feature spec. `specification-updates.md` records later requests
 (keyboard-only tag autocomplete, a graph selector, and having Tag Properties mode read/write a tag's
 *existing* Logseq properties instead of extension-defined duplicates). All of them are **implemented**
 as of 1.3.8; its status block at the top says how. Verified API behaviors and the message/storage
-contracts live in `.claude/skills/logseq-clipper-dev/REFERENCE.md` — check it before guessing how
+contracts live in `.claude/skills/logseq-clipper-dev/REFERENCE.md` (private tree) — check it before guessing how
 Logseq's HTTP API or CLI behaves.
 
 
