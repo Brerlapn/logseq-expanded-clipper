@@ -5,7 +5,8 @@
 # history with the author email replaced by the GitHub noreply address and the
 # agent tooling (.claude, .codex, .agents, .beads) and the private spec notes
 # (references.md, specification.md, specification-updates.md, implementation-plan.md,
-# errors.md) removed from every commit.
+# errors.md) and the internal docs (docs/adr, docs/plans, docs/verification) removed
+# from every commit.
 # The rewrite is deterministic, so re-running it and force-pushing keeps the
 # mirror a pure function of the private history.
 #
@@ -31,7 +32,8 @@ cd "$WORK/repo"
 git-filter-repo --force --quiet --mailmap "$WORK/mailmap" --invert-paths \
   --path .claude --path .codex --path .agents --path .beads \
   --path references.md --path specification.md --path specification-updates.md \
-  --path implementation-plan.md --path errors.md
+  --path implementation-plan.md --path errors.md \
+  --path docs/adr --path docs/plans --path docs/verification
 
 # Refuse to publish if anything private survived the rewrite.
 if git log -p | grep -q -i -E "$OLD_EMAIL|$OLD_HOST"; then
